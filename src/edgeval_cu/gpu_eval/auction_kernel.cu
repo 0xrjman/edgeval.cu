@@ -63,7 +63,7 @@
 #define ITERS_EPS4   200
 #define ITERS_EPS2   400
 #define ITERS_EPS1  500
-#define ITERS_EPS0     0
+#define ITERS_EPS0  5000
 
 /**
  * @def CUDA_CHECK(ans)
