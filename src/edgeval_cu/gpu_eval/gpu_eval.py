@@ -1,5 +1,5 @@
-"""
-gpu_eval.py — GPU-accelerated edge evaluation pipeline.
+"""gpu_eval.py — GPU-accelerated edge evaluation pipeline.
+
 Batches ALL (threshold, GT) pairs of one image into a single
 auction kernel launch on GPU.
 """
@@ -82,21 +82,30 @@ def gpu_edges_eval_img(edge_prob, gt_path, thrs=99, max_dist=0.0075,
     assignments = batch_solve(problems) if problems else []
 
     cnt_sum_r_p = np.zeros((k, 4), dtype=np.int64)
+    # matched_pred_union: track which pred pixel indices are matched across
+    # all GT annotations for each threshold (OR semantics, like CPU version's
+    # np.logical_or(match_e, match_e1 > 0) across GTs)
+    matched_pred_union = [set() for _ in range(k)]
+
     for item_idx, (k_idx, g_idx, prob_idx) in enumerate(prob_map):
         g = gt_raw[g_idx]
-        e1 = all_binary[k_idx]
+        cnt_sum_r_p[k_idx, 1] += g.sum()  # total_GT: sum across GTs
         if prob_idx < 0:
-            cnt_sum_r_p[k_idx, 1] += g.sum()
-            cnt_sum_r_p[k_idx, 3] += e1.sum()
             continue
         assign = assignments[prob_idx]
         n2 = problems[prob_idx]['n_objects']
-        matched_pred = (assign < n2).sum()
+        # matched GT pixels (unique per GT annotation, summed across GTs)
         unique_gt = len(np.unique(assign[assign < n2]))
         cnt_sum_r_p[k_idx, 0] += unique_gt
-        cnt_sum_r_p[k_idx, 1] += g.sum()
-        cnt_sum_r_p[k_idx, 2] += matched_pred
-        cnt_sum_r_p[k_idx, 3] += e1.sum()
+        # Track which pred pixel indices are matched (OR across GTs)
+        matched_idx = np.where(assign < n2)[0]
+        matched_pred_union[k_idx].update(matched_idx.tolist())
+
+    # Populate total_pred and matched_pred once per threshold (not per GT)
+    for k_idx in range(k):
+        e1 = all_binary[k_idx]
+        cnt_sum_r_p[k_idx, 2] = len(matched_pred_union[k_idx])
+        cnt_sum_r_p[k_idx, 3] = e1.sum()
 
     info = np.concatenate([thrs_vals[:, None], cnt_sum_r_p], axis=1)
     return info, None

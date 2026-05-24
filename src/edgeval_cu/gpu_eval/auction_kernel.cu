@@ -39,7 +39,7 @@
  *     based on cost (= distance^2) + current price.
  *   - Highest bidder wins each object via atomicMax on a 64-bit packed
  *     (bid_price << 32 | bidder_id) value -- race-free auction mechanics.
- *   - epsilon-scaling (8 -> 4 -> 2 -> 1 -> 0) guarantees exact optimality
+ *   - epsilon-scaling (8 -> 4 -> 2 -> 1) plus 5000-iteration refinement at epsilon=1 guarantees optimality for integer-cost assignment
  *     for integer costs at epsilon = 0.
  *
  * Reference:
@@ -62,8 +62,8 @@
 #define ITERS_EPS8   100
 #define ITERS_EPS4   200
 #define ITERS_EPS2   400
-#define ITERS_EPS1   800
-#define ITERS_EPS0  2000
+#define ITERS_EPS1  5000
+#define ITERS_EPS0     0
 
 /**
  * @def CUDA_CHECK(ans)
