@@ -82,26 +82,20 @@ def gpu_edges_eval_img(edge_prob, gt_path, thrs=99, max_dist=0.0075,
     assignments = batch_solve(problems) if problems else []
 
     cnt_sum_r_p = np.zeros((k, 4), dtype=np.int64)
-    # matched_pred_union: track which pred pixel indices are matched across
-    # all GT annotations for each threshold (OR semantics, like CPU version's
-    # np.logical_or(match_e, match_e1 > 0) across GTs)
     matched_pred_union = [set() for _ in range(k)]
 
     for item_idx, (k_idx, g_idx, prob_idx) in enumerate(prob_map):
         g = gt_raw[g_idx]
-        cnt_sum_r_p[k_idx, 1] += g.sum()  # total_GT: sum across GTs
+        cnt_sum_r_p[k_idx, 1] += g.sum()
         if prob_idx < 0:
             continue
         assign = assignments[prob_idx]
         n2 = problems[prob_idx]['n_objects']
-        # matched GT pixels (unique per GT annotation, summed across GTs)
         unique_gt = len(np.unique(assign[assign < n2]))
         cnt_sum_r_p[k_idx, 0] += unique_gt
-        # Track which pred pixel indices are matched (OR across GTs)
         matched_idx = np.where(assign < n2)[0]
         matched_pred_union[k_idx].update(matched_idx.tolist())
 
-    # Populate total_pred and matched_pred once per threshold (not per GT)
     for k_idx in range(k):
         e1 = all_binary[k_idx]
         cnt_sum_r_p[k_idx, 2] = len(matched_pred_union[k_idx])
@@ -155,17 +149,21 @@ def gpu_edges_eval_dir(res_dir, gt_dir, thrs=99, max_dist=0.0075,
     ods_r, ods_p, ods_f, ods_t = find_best_rpf(t, r, p)
     ois_r, ois_p, ois_f = compute_rpf(ois_sum[None, :])
 
-    k = np.unique(r, return_index=True)[1][::-1]
-    rr, pp = r[k], p[k]
+    # AP and R50 — match original edges_eval_plot.py behavior exactly
+    mask = r >= 1e-3
+    rr_full, pp_full = r[mask], p[mask]
     ap = 0.0
-    if len(rr) > 1:
-        ap = interp1d(rr, pp, bounds_error=False, fill_value=0)(np.linspace(0, 1, 101))
+    if len(rr_full) > 1:
+        kk = np.unique(rr_full, return_index=True)[1][::-1]
+        rr_uniq, pp_uniq = rr_full[kk], pp_full[kk]
+        ap = interp1d(rr_uniq, pp_uniq, bounds_error=False, fill_value=0)(np.linspace(0, 1, 101))
         ap = np.sum(ap) / 100.0
 
+    # R50: match edges_eval_plot.py exactly
     r50 = np.nan
-    _, o = np.unique(pp, return_index=True)
-    if len(o) > 1 and np.max(pp[o]) >= 0.5:
-        r50 = interp1d(pp[o], rr[o], bounds_error=False, fill_value=np.nan)(0.5)
+    _, o = np.unique(pp_full, return_index=True)
+    if len(o) > 1:
+        r50 = interp1d(pp_full[o], rr_full[o], bounds_error=False, fill_value=np.nan)(np.maximum(pp_full[o[0]], 0.5))
 
     bdry = np.array([[ods_t, ods_r, ods_p, ods_f,
                       ois_r.item(), ois_p.item(), ois_f.item(), ap]])
