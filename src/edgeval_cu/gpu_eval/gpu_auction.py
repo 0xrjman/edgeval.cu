@@ -26,7 +26,6 @@ def _get_lib():
 
 def _build_pe_start(edge_person, n_persons_list, edge_starts):
     """Build flat person_edge_start array and per-problem offsets."""
-    total_persons = sum(n_persons_list)
     P = len(n_persons_list)
     pe_start = []
     for p in range(P):
@@ -37,10 +36,10 @@ def _build_pe_start(edge_person, n_persons_list, edge_starts):
             pe_start.extend([e_beg] * (n1 + 1))
             continue
         person_ids = edge_person[e_beg:e_end]
+        # Vectorized: bincount + cumsum replaces O(n) Python loop
+        person_counts = np.bincount(person_ids, minlength=n1)
         person_edge_start = np.zeros(n1 + 1, dtype=np.int32)
-        for pi in range(n1):
-            mask = (person_ids == pi)
-            person_edge_start[pi + 1] = person_edge_start[pi] + mask.sum()
+        person_edge_start[1:] = np.cumsum(person_counts).astype(np.int32)
         pe_start.extend((e_beg + person_edge_start).tolist())
     pe_start = np.array(pe_start, dtype=np.int32)
     pe_offset = np.zeros(P + 1, dtype=np.int32)

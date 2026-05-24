@@ -62,7 +62,7 @@
 #define ITERS_EPS8   100
 #define ITERS_EPS4   200
 #define ITERS_EPS2   400
-#define ITERS_EPS1  5000
+#define ITERS_EPS1  500
 #define ITERS_EPS0     0
 
 /**
