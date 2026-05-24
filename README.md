@@ -149,8 +149,8 @@ Benchmarked on RTX 4090 (CUDA 13.2, sm_89, AMD Ryzen 9 7950X):
 | Scenario | CPU | GPU | Speedup |
 |----------|-----|-----|---------|
 | Single problem (1200x1000) | ~10 ms | ~1.5 ms | 6.7x |
-| 1 image (99 thr x 5 GT) | ~6 s | ~0.8 s | 7.5x |
-| **200 images (BSDS500 full)** | **~20 min** | **~2.7 min** | **7.4x** |
+| 1 image (99 thr × 5 GT) | ~6 s | **~1.18 s** | **5.1×** |
+| **200 images (BSDS500 full)** | **~20 min** | **~3m55s** | **5.1×** |
 
 ---
 
