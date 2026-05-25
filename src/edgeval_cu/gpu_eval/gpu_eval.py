@@ -9,7 +9,7 @@ from scipy.io import loadmat
 from scipy.interpolate import interp1d
 from .._impl.bwmorph_thin import bwmorph_thin
 from .._impl.edges_eval_dir import compute_rpf, find_best_rpf, eps as EVAL_EPS
-from .gpu_auction import batch_solve
+from .gpu_auction import batch_solve, build_extended_problem
 import os
 import glob
 from tqdm import tqdm
@@ -68,32 +68,43 @@ def gpu_edges_eval_img(edge_prob, gt_path, thrs=99, max_dist=0.0075,
         all_binary.append(e1)
 
     problems = []
-    prob_map = []
+    prob_meta = []  # (k_idx, g_idx, prob_idx, n1_orig, n2_orig)
     for k_idx, e1 in enumerate(all_binary):
         for g_idx, g in enumerate(gt_raw):
             prob = build_problem(e1, g, max_dist_px, oc)
             if prob is None:
-                prob_map.append((k_idx, g_idx, -1))
+                prob_meta.append((k_idx, g_idx, -1, 0, 0))
             else:
-                prob_idx = len(problems)
-                problems.append(prob)
-                prob_map.append((k_idx, g_idx, prob_idx))
+                n1_orig = prob['n_persons']
+                n2_orig = prob['n_objects']
+                ext = build_extended_problem(n1_orig, n2_orig,
+                                             prob['edges'], prob['outlier_cost'])
+                if ext is None:
+                    prob_meta.append((k_idx, g_idx, -1, 0, 0))
+                else:
+                    prob_idx = len(problems)
+                    problems.append(ext)
+                    prob_meta.append((k_idx, g_idx, prob_idx,
+                                      n1_orig, n2_orig))
 
     assignments = batch_solve(problems) if problems else []
 
     cnt_sum_r_p = np.zeros((k, 4), dtype=np.int64)
     matched_pred_union = [set() for _ in range(k)]
 
-    for item_idx, (k_idx, g_idx, prob_idx) in enumerate(prob_map):
+    for item_idx, (k_idx, g_idx, prob_idx, n1_orig, n2_orig) in enumerate(prob_meta):
         g = gt_raw[g_idx]
         cnt_sum_r_p[k_idx, 1] += g.sum()
         if prob_idx < 0:
             continue
         assign = assignments[prob_idx]
-        n2 = problems[prob_idx]['n_objects']
-        unique_gt = len(np.unique(assign[assign < n2]))
+        # Extended graph: persons 0..n1_orig-1 are real, rest are virtual
+        # assign[i] < n2_orig means real-to-real match
+        real_assign = assign[:n1_orig]
+        real_matches = real_assign[real_assign < n2_orig]
+        unique_gt = len(np.unique(real_matches))
         cnt_sum_r_p[k_idx, 0] += unique_gt
-        matched_idx = np.where(assign < n2)[0]
+        matched_idx = np.where(real_assign < n2_orig)[0]
         matched_pred_union[k_idx].update(matched_idx.tolist())
 
     for k_idx in range(k):
