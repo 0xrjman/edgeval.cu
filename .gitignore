@@ -28,8 +28,21 @@ Thumbs.db
 *-eval-*/
 *-eval-gpu/
 
+# Benchmark and test artifacts
+benchmark_*.py
+test_*.py
+single_img_benchmark.py
+run_hed_benchmark.py
+generate_chart.py
+*.json
+*.npy
+*.html
+gpu_eval_precise.py
+
 # Compiled libraries (keep source .cu and .cc, ignore local builds)
 cxx/lib/*.so
+cxx/cxx
+cxx/lib/lib
 gpu_eval/auction_cuda.so
 
 # Environment
