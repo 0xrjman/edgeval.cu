@@ -6,38 +6,28 @@ import subprocess
 from ctypes import *
 
 _lib = None
-_lib_csa = None
 _c_int_pointer = POINTER(c_int32)
 
 
-def _get_csa_solver():
-    """Load the C++ CSA solver library for kOfN random sampling."""
-    global _lib_csa
-    if _lib_csa is not None:
-        return _lib_csa
-    lib_path = os.path.join(os.path.dirname(__file__), *([".."] * 3),
-                            "cxx", "lib", "solve_csa.so")
-    lib_path = os.path.realpath(lib_path)
-    if os.path.exists(lib_path):
-        _lib_csa = cdll.LoadLibrary(lib_path)
-    return _lib_csa
+# ── Vectorized extended graph builder ───────────────────────────────
+
+def _sample_unique(d, n, cnt):
+    """Generate (cnt, d) matrix of unique values from [0, n-1] per row."""
+    result = np.random.randint(0, int(n), size=(cnt, d), dtype=np.int32)
+    while True:
+        result.sort(axis=1)
+        dup = (result[:, 1:] == result[:, :-1]).any(axis=1)
+        if not dup.any():
+            break
+        result[dup] = np.random.randint(0, int(n), size=(int(dup.sum()), d), dtype=np.int32)
+    return result
 
 
-def build_extended_problem(n1, n2, real_edges, oc_int):
-    """Build extended assignment problem matching CPU CSA graph structure.
+def _build_extended_edges_fast(n1, n2, real_edges, oc_int):
+    """Build extended graph edges using fully vectorized numpy kOfN.
 
-    The extended graph is a square assignment: n = n1 + n2 persons and
-    n = n1 + n2 objects. Persons 0..n1-1 are real; persons n1..n-1
-    are virtual. Objects 0..n2-1 are real; objects n2..n-1 are virtual.
-
-    Virtual nodes + kOfN outlier edges + diagonal overlay ensure the
-    solver considers the same trade-offs as the CPU CSA reference,
-    allowing persons to "opt out" of poor matches at outlier_cost.
-
-    Returns problem dict with updated n_persons, n_objects, edges.
-    Returns None if the extended problem has no edges.
+    Replaces the per-call C++ kOfN (ctypes) with numpy batch operations.
     """
-    solver = _get_csa_solver()
     degree = 6
     multiplier = 100
 
@@ -46,93 +36,91 @@ def build_extended_problem(n1, n2, real_edges, oc_int):
     d1 = max(0, min(degree, int(n1) - 1)) if n1 > 0 else 0
     d2 = max(0, min(degree, int(n2) - 1)) if n2 > 0 else 0
     d3 = min(degree, min(int(n1), int(n2))) if n1 > 0 and n2 > 0 else 0
-    ow = int(oc_int)  # outlier weight (already scaled by 100)
+    ow = int(oc_int)
 
-    # Pre-allocate for speed: count edges
     total_edges = len(real_edges) + d1 * n1 + d2 * n2 + d3 * n_max + n
     if total_edges == 0:
-        return None
+        return np.empty((0, 3), dtype=np.int32), n
 
-    igraph = np.zeros((total_edges, 3), dtype=np.int32)
+    igraph = np.empty((total_edges, 3), dtype=np.int32)
     count = 0
 
-    # 1. Real edges (person i -> object j)
+    # 1. Real edges
     if len(real_edges) > 0:
         igraph[:len(real_edges)] = real_edges
         count += len(real_edges)
 
-    # 2. kOfN outlier edges for map1 (real person -> virtual object)
+    # 2. Real person -> virtual object (skip self)
     if d1 > 0 and n1 > 0:
-        for i in range(n1):
-            buf = (c_int32 * d1)()
-            solver.kOfN(d1, n1 - 1, buf)
-            for a in range(d1):
-                j = buf[a]
-                if j >= i:
-                    j += 1
-                igraph[count, 0] = i
-                igraph[count, 1] = n2 + j
-                igraph[count, 2] = ow
-                count += 1
+        choices = _sample_unique(d1, n1 - 1, n1)
+        choices = choices + (choices >= np.arange(n1, dtype=np.int32)[:, None]).astype(np.int32)
+        n_rows = n1 * d1
+        igraph[count:count + n_rows, 0] = np.repeat(np.arange(n1, dtype=np.int32), d1)
+        igraph[count:count + n_rows, 1] = n2 + choices.ravel()
+        igraph[count:count + n_rows, 2] = ow
+        count += n_rows
 
-    # 3. kOfN outlier edges for map2 (virtual person -> real object)
+    # 3. Virtual person -> real object (skip self)
     if d2 > 0 and n2 > 0:
-        for j in range(n2):
-            buf = (c_int32 * d2)()
-            solver.kOfN(d2, n2 - 1, buf)
-            for a in range(d2):
-                i = buf[a]
-                if i >= j:
-                    i += 1
-                igraph[count, 0] = n1 + i
-                igraph[count, 1] = j
-                igraph[count, 2] = ow
-                count += 1
+        choices = _sample_unique(d2, n2 - 1, n2)
+        choices = choices + (choices >= np.arange(n2, dtype=np.int32)[:, None]).astype(np.int32)
+        n_rows = n2 * d2
+        igraph[count:count + n_rows, 0] = n1 + choices.ravel()
+        igraph[count:count + n_rows, 1] = np.repeat(np.arange(n2, dtype=np.int32), d2)
+        igraph[count:count + n_rows, 2] = ow
+        count += n_rows
 
-    # 4. kOfN outlier-to-outlier edges (virtual -> virtual)
+    # 4. Virtual <-> virtual
     if d3 > 0 and n_min > 0:
-        for i in range(n_max):
-            buf = (c_int32 * d3)()
-            solver.kOfN(d3, n_min, buf)
-            for a in range(d3):
-                j = buf[a]
-                if n1 < n2:
-                    igraph[count, 0] = n1 + i
-                    igraph[count, 1] = n2 + j
-                else:
-                    igraph[count, 0] = n1 + j
-                    igraph[count, 1] = n2 + i
-                igraph[count, 2] = ow
-                count += 1
+        choices = _sample_unique(d3, n_min, n_max)
+        n_rows = n_max * d3
+        if n1 < n2:
+            igraph[count:count + n_rows, 0] = n1 + np.repeat(np.arange(n_max, dtype=np.int32), d3)
+            igraph[count:count + n_rows, 1] = n2 + choices.ravel()
+        else:
+            igraph[count:count + n_rows, 0] = n1 + choices.ravel()
+            igraph[count:count + n_rows, 1] = n2 + np.repeat(np.arange(n_max, dtype=np.int32), d3)
+        igraph[count:count + n_rows, 2] = ow
+        count += n_rows
 
     # 5. Diagonal perfect-match overlay
-    for i in range(n1):
-        igraph[count, 0] = i
-        igraph[count, 1] = n2 + i
-        igraph[count, 2] = ow * multiplier
-        count += 1
-    for i in range(n2):
-        igraph[count, 0] = n1 + i
-        igraph[count, 1] = i
-        igraph[count, 2] = ow * multiplier
-        count += 1
+    oc_mult = ow * multiplier
+    diag1 = np.zeros((n1, 3), dtype=np.int32)
+    diag1[:, 0] = np.arange(n1, dtype=np.int32)
+    diag1[:, 1] = n2 + np.arange(n1, dtype=np.int32)
+    diag1[:, 2] = oc_mult
+    igraph[count:count + n1] = diag1
+    count += n1
+
+    diag2 = np.zeros((n2, 3), dtype=np.int32)
+    diag2[:, 0] = n1 + np.arange(n2, dtype=np.int32)
+    diag2[:, 1] = np.arange(n2, dtype=np.int32)
+    diag2[:, 2] = oc_mult
+    igraph[count:count + n2] = diag2
+    count += n2
 
     assert count == total_edges, f"Edge count mismatch: {count} vs {total_edges}"
 
-    # Sort by (person, object) to match batch_solve expectations
     igraph = igraph[np.lexsort((igraph[:, 1], igraph[:, 0]))]
+    return igraph, n
 
+
+# ── Extended problem builder (public API) ───────────────────────────
+
+def build_extended_problem(n1, n2, real_edges, oc_int):
+    """Build extended assignment problem matching CPU CSA graph structure."""
+    edges, n = _build_extended_edges_fast(n1, n2, real_edges, oc_int)
+    if len(edges) == 0:
+        return None
     return {
         'n_persons': n,
         'n_objects': n,
-        'edges': igraph,
-        # Set outlier_cost very high --- in extended graph, all outlier decisions
-        # are handled via virtual-node edges, NOT via the kernel's automatic
-        # outlier shortcut (oc < best_val -> assign = n2).  A high sentinel
-        # ensures the kernel never triggers that path.
+        'edges': edges,
         'outlier_cost': np.iinfo(np.int32).max // 4,
     }
 
+
+# ── GPU library loader ──────────────────────────────────────────────
 
 def _get_lib():
     global _lib
@@ -154,11 +142,9 @@ def _get_lib():
     return _lib
 
 
-def _get_gpu_free_memory():
-    """Query available GPU memory in bytes via nvidia-smi.
+# ── Memory query and chunking ───────────────────────────────────────
 
-    Returns (free_bytes, total_bytes) or (None, None) on failure.
-    """
+def _get_gpu_free_memory():
     try:
         out = subprocess.check_output(
             ['nvidia-smi', '--query-gpu=memory.free,memory.total',
@@ -172,33 +158,24 @@ def _get_gpu_free_memory():
 
 
 def _estimate_chunk_mem(problems):
-    """Estimate GPU memory (bytes) needed for a chunk of problems.
-
-    Mirrors the cudaMalloc calls in auction_kernel.cu:auction_solve_batch.
-    """
     P = len(problems)
     total_persons = sum(p['n_persons'] for p in problems)
     total_objects = sum(p['n_objects'] for p in problems)
     total_edges = sum(len(p['edges']) for p in problems)
 
     mem = 0
-    # Per-problem arrays (int32 = 4B)
-    mem += P * 4 * 4            # d_np, d_no, d_oc, (P*4)
-    mem += (P + 1) * 4 * 5      # d_es, d_po, d_oo, d_peo (+1 for sentinel)
-    # Edge data (int32)
-    mem += total_edges * 4 * 3  # d_ep, d_eo, d_ec
-    # Person arrays (int32)
-    mem += total_persons * 4    # d_as  (assignment output)
-    mem += (total_persons + P) * 4  # d_pes (pe_start)
-    # Object arrays
-    mem += total_objects * 4    # d_pr  (prices, int32)
-    mem += total_objects * 8    # d_pk  (packed bids, uint64)
-    mem += total_objects * 4    # d_own (owners, int32)
+    mem += P * 4 * 4
+    mem += (P + 1) * 4 * 5
+    mem += total_edges * 4 * 3
+    mem += total_persons * 4
+    mem += (total_persons + P) * 4
+    mem += total_objects * 4
+    mem += total_objects * 8
+    mem += total_objects * 4
     return mem
 
 
 def _build_pe_start(edge_person, n_persons_list, edge_starts):
-    """Build flat person_edge_start array and per-problem offsets."""
     P = len(n_persons_list)
     pe_start = []
     for p in range(P):
@@ -209,7 +186,6 @@ def _build_pe_start(edge_person, n_persons_list, edge_starts):
             pe_start.extend([e_beg] * (n1 + 1))
             continue
         person_ids = edge_person[e_beg:e_end]
-        # Vectorized: bincount + cumsum replaces O(n) Python loop
         person_counts = np.bincount(person_ids, minlength=n1)
         person_edge_start = np.zeros(n1 + 1, dtype=np.int32)
         person_edge_start[1:] = np.cumsum(person_counts).astype(np.int32)
@@ -222,23 +198,12 @@ def _build_pe_start(edge_person, n_persons_list, edge_starts):
 
 
 def _build_chunks(problems):
-    """Partition problems into memory-safe chunks using dynamic sizing.
-
-    Uses nvidia-smi to query available GPU memory and greedily packs
-    problems into chunks that each fit within ~60% of free memory.
-    Falls back to 128 problems per chunk when query fails.
-    """
     free_mem, _ = _get_gpu_free_memory()
     if free_mem is None:
-        # fallback: 128 per chunk (was 32 --- too conservative, caused
-        # 16x overhead on BSDS500 single-image eval)
         chunk_sz = min(128, len(problems))
         return [problems[i:i + chunk_sz] for i in range(0, len(problems), chunk_sz)]
 
-    # Use 60% of free memory per chunk --- safe margin avoids OOM from
-    # CUDA context overhead and concurrent GPU activity.
     budget = int(0.6 * free_mem)
-
     chunks = []
     i = 0
     while i < len(problems):
@@ -251,7 +216,7 @@ def _build_chunks(problems):
             chunk.append(problems[i])
             chunk_mem += p_mem
             i += 1
-        if not chunk:  # single problem over budget --- force it anyway
+        if not chunk:
             chunk = [problems[i]]
             i += 1
         chunks.append(chunk)
@@ -259,7 +224,6 @@ def _build_chunks(problems):
 
 
 def _solve_chunk(problems, lib, verbose):
-    """Solve a chunk of problems on GPU (fits in device memory)."""
     P = len(problems)
     if P == 0:
         return []
@@ -314,16 +278,12 @@ def _solve_chunk(problems, lib, verbose):
     return results
 
 
-def batch_solve(problems, verbose=False):
-    """Solve batch of assignment problems on GPU.
+# ── Public API ──────────────────────────────────────────────────────
 
-    Dynamically chunks problems based on available GPU memory to
-    minimise kernel launch overhead while avoiding OOM.
-    """
+def batch_solve(problems, verbose=False):
     lib = _get_lib()
     if not problems:
         return []
-
     chunks = _build_chunks(problems)
     results = []
     for chunk in chunks:

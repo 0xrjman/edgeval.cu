@@ -15,16 +15,16 @@ import glob
 from tqdm import tqdm
 
 
-def build_problem(e1_binary, g_binary, max_dist, outlier_cost):
-    """Build one assignment problem for GPU auction."""
-    pred_pixels = np.stack(np.where(e1_binary), axis=1).astype(np.float64)
-    gt_pixels = np.stack(np.where(g_binary), axis=1).astype(np.float64)
-    n1, n2 = len(pred_pixels), len(gt_pixels)
+def _build_problem_from_trees(pred_pixels, gt_tree, max_dist_px, outlier_cost):
+    """Build one assignment problem using pre-built GT cKDTree.
+
+    Only builds ONE cKDTree (for pred_pixels), reuses gt_tree.
+    """
+    n1, n2 = len(pred_pixels), len(gt_tree.data)
     if n1 == 0 or n2 == 0:
         return None
-    gt_tree = cKDTree(gt_pixels)
     pairs = cKDTree(pred_pixels).sparse_distance_matrix(
-        gt_tree, max_dist, output_type='coo_matrix')
+        gt_tree, max_dist_px, output_type='coo_matrix')
     if len(pairs.data) == 0:
         return None
     mult = 100
@@ -60,18 +60,28 @@ def gpu_edges_eval_img(edge_prob, gt_path, thrs=99, max_dist=0.0075,
         k = len(thrs)
         thrs_vals = np.asarray(thrs)
 
-    all_binary = []
+    # Pre-build ALL binary masks and pred pixel arrays
+    pred_pixels_list = []
     for t in thrs_vals:
         e1 = edge_prob >= max(EVAL_EPS, t)
         if thin:
             e1 = bwmorph_thin(e1)
-        all_binary.append(e1)
+        px = np.stack(np.where(e1), axis=1).astype(np.float64)
+        pred_pixels_list.append(px)
 
+    # Pre-build ALL GT trees (reuse across ALL thresholds)
+    gt_trees = []
+    for g in gt_raw:
+        gt_px = np.stack(np.where(g), axis=1).astype(np.float64)
+        gt_trees.append(cKDTree(gt_px))
+
+    # Build all problems with extended graph
     problems = []
     prob_meta = []  # (k_idx, g_idx, prob_idx, n1_orig, n2_orig)
-    for k_idx, e1 in enumerate(all_binary):
-        for g_idx, g in enumerate(gt_raw):
-            prob = build_problem(e1, g, max_dist_px, oc)
+
+    for k_idx, pred_px in enumerate(pred_pixels_list):
+        for g_idx, gt_tree in enumerate(gt_trees):
+            prob = _build_problem_from_trees(pred_px, gt_tree, max_dist_px, oc)
             if prob is None:
                 prob_meta.append((k_idx, g_idx, -1, 0, 0))
             else:
@@ -98,8 +108,7 @@ def gpu_edges_eval_img(edge_prob, gt_path, thrs=99, max_dist=0.0075,
         if prob_idx < 0:
             continue
         assign = assignments[prob_idx]
-        # Extended graph: persons 0..n1_orig-1 are real, rest are virtual
-        # assign[i] < n2_orig means real-to-real match
+        # Extended graph: persons 0..n1_orig-1 are real, rest virtual
         real_assign = assign[:n1_orig]
         real_matches = real_assign[real_assign < n2_orig]
         unique_gt = len(np.unique(real_matches))
@@ -108,9 +117,8 @@ def gpu_edges_eval_img(edge_prob, gt_path, thrs=99, max_dist=0.0075,
         matched_pred_union[k_idx].update(matched_idx.tolist())
 
     for k_idx in range(k):
-        e1 = all_binary[k_idx]
         cnt_sum_r_p[k_idx, 2] = len(matched_pred_union[k_idx])
-        cnt_sum_r_p[k_idx, 3] = e1.sum()
+        cnt_sum_r_p[k_idx, 3] = len(pred_pixels_list[k_idx])
 
     info = np.concatenate([thrs_vals[:, None], cnt_sum_r_p], axis=1)
     return info, None
@@ -160,7 +168,6 @@ def gpu_edges_eval_dir(res_dir, gt_dir, thrs=99, max_dist=0.0075,
     ods_r, ods_p, ods_f, ods_t = find_best_rpf(t, r, p)
     ois_r, ois_p, ois_f = compute_rpf(ois_sum[None, :])
 
-    # AP and R50 — match original edges_eval_plot.py behavior exactly
     mask = r >= 1e-3
     rr_full, pp_full = r[mask], p[mask]
     ap = 0.0
@@ -170,7 +177,6 @@ def gpu_edges_eval_dir(res_dir, gt_dir, thrs=99, max_dist=0.0075,
         ap = interp1d(rr_uniq, pp_uniq, bounds_error=False, fill_value=0)(np.linspace(0, 1, 101))
         ap = np.sum(ap) / 100.0
 
-    # R50: match edges_eval_plot.py exactly
     r50 = np.nan
     _, o = np.unique(pp_full, return_index=True)
     if len(o) > 1:
