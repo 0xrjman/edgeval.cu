@@ -2,6 +2,7 @@
 import ctypes
 import numpy as np
 import os
+import subprocess
 
 _lib = None
 
@@ -23,6 +24,49 @@ def _get_lib():
         ctypes.POINTER(ctypes.c_int), ctypes.c_int,
     ]
     return _lib
+
+
+def _get_gpu_free_memory():
+    """Query available GPU memory in bytes via nvidia-smi.
+
+    Returns (free_bytes, total_bytes) or (None, None) on failure.
+    """
+    try:
+        out = subprocess.check_output(
+            ['nvidia-smi', '--query-gpu=memory.free,memory.total',
+             '--format=csv,noheader,nounits'],
+            timeout=5
+        ).decode().strip()
+        free_mb, total_mb = map(int, out.split(','))
+        return free_mb * 1024 * 1024, total_mb * 1024 * 1024
+    except Exception:
+        return None, None
+
+
+def _estimate_chunk_mem(problems):
+    """Estimate GPU memory (bytes) needed for a chunk of problems.
+
+    Mirrors the cudaMalloc calls in auction_kernel.cu:auction_solve_batch.
+    """
+    P = len(problems)
+    total_persons = sum(p['n_persons'] for p in problems)
+    total_objects = sum(p['n_objects'] for p in problems)
+    total_edges = sum(len(p['edges']) for p in problems)
+
+    mem = 0
+    # Per-problem arrays (int32 = 4B)
+    mem += P * 4 * 4            # d_np, d_no, d_oc, (P*4)
+    mem += (P + 1) * 4 * 5      # d_es, d_po, d_oo, d_peo (+1 for sentinel)
+    # Edge data (int32)
+    mem += total_edges * 4 * 3  # d_ep, d_eo, d_ec
+    # Person arrays (int32)
+    mem += total_persons * 4    # d_as  (assignment output)
+    mem += (total_persons + P) * 4  # d_pes (pe_start)
+    # Object arrays
+    mem += total_objects * 4    # d_pr  (prices, int32)
+    mem += total_objects * 8    # d_pk  (packed bids, uint64)
+    mem += total_objects * 4    # d_own (owners, int32)
+    return mem
 
 def _build_pe_start(edge_person, n_persons_list, edge_starts):
     """Build flat person_edge_start array and per-problem offsets."""
@@ -48,7 +92,41 @@ def _build_pe_start(edge_person, n_persons_list, edge_starts):
     return pe_start, pe_offset
 
 
-_CHUNK_SIZE = 32
+def _build_chunks(problems):
+    """Partition problems into memory-safe chunks using dynamic sizing.
+
+    Uses nvidia-smi to query available GPU memory and greedily packs
+    problems into chunks that each fit within ~60% of free memory.
+    Falls back to 128 problems per chunk when query fails.
+    """
+    free_mem, _ = _get_gpu_free_memory()
+    if free_mem is None:
+        # fallback: 128 per chunk (was 32 — too conservative, caused
+        # 16x overhead on BSDS500 single-image eval)
+        chunk_sz = min(128, len(problems))
+        return [problems[i:i + chunk_sz] for i in range(0, len(problems), chunk_sz)]
+
+    # Use 60% of free memory per chunk — safe margin avoids OOM from
+    # CUDA context overhead and concurrent GPU activity.
+    budget = int(0.6 * free_mem)
+
+    chunks = []
+    i = 0
+    while i < len(problems):
+        chunk = []
+        chunk_mem = 0
+        while i < len(problems):
+            p_mem = _estimate_chunk_mem([problems[i]])
+            if chunk_mem + p_mem > budget and len(chunk) > 0:
+                break
+            chunk.append(problems[i])
+            chunk_mem += p_mem
+            i += 1
+        if not chunk:  # single problem over budget — force it anyway
+            chunk = [problems[i]]
+            i += 1
+        chunks.append(chunk)
+    return chunks
 
 
 def _solve_chunk(problems, lib, verbose):
@@ -110,18 +188,16 @@ def _solve_chunk(problems, lib, verbose):
 def batch_solve(problems, verbose=False):
     """Solve batch of assignment problems on GPU.
 
-    Chunks problems to avoid GPU memory exhaustion.
+    Dynamically chunks problems based on available GPU memory to
+    minimise kernel launch overhead while avoiding OOM.
     """
     lib = _get_lib()
     if not problems:
         return []
 
-    total_persons = sum(p['n_persons'] for p in problems)
-    # Rough memory estimate: pe_start dominates at 4 * (total_persons + P) bytes
-    # plus edges, prices, etc.  Chunk at ~32 problems to stay safe.
+    chunks = _build_chunks(problems)
     results = []
-    for start in range(0, len(problems), _CHUNK_SIZE):
-        chunk = problems[start:start + _CHUNK_SIZE]
+    for chunk in chunks:
         chunk_results = _solve_chunk(chunk, lib, verbose)
         results.extend(chunk_results)
     return results
