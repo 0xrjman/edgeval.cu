@@ -62,8 +62,15 @@
 #define ITERS_EPS8   100
 #define ITERS_EPS4   200
 #define ITERS_EPS2   400
-#define ITERS_EPS1  500
+#define ITERS_EPS1   500
 #define ITERS_EPS0  5000
+
+/** Consecutive no-change rounds before stall at each epsilon level.
+ *  Higher values = more patient convergence.
+ *  eps=0 has NO stall limit — runs until assigned or iter limit. */
+#define STALL_EPS_8_4_2  3
+#define STALL_EPS_1     10
+#define STALL_EPS_0    50   /* eps=0: stall after 50 consecutive no-change rounds */
 
 /**
  * @def CUDA_CHECK(ans)
@@ -198,10 +205,18 @@ __global__ void auction_kernel(
     for (int eidx = 0; eidx < n_eps_levels; ++eidx) {
         int eps   = eps_values[eidx];
         int limit = eps_iters[eidx];
+        int stall_limit;
+        if (eps >= 2)      stall_limit = STALL_EPS_8_4_2;
+        else if (eps == 1) stall_limit = STALL_EPS_1;
+        else               stall_limit = STALL_EPS_0;  /* 0 = disabled */
 
         for (int j = tid; j < n2; j += n_thr) {
             pk[j] = 0;
         }
+        __syncthreads();
+
+        __shared__ int s_stall_count;
+        if (tid == 0) s_stall_count = 0;
         __syncthreads();
 
         int iter = 0;
@@ -295,13 +310,20 @@ __global__ void auction_kernel(
             __syncthreads();
             if (s_rem == 0) break;
 
-            __shared__ int s_stall;
-            if (tid == 0) s_stall = (s_any_change == 0) ? 1 : 0;
-            __syncthreads();
-            if (s_stall) {
-                for (int i = tid; i < n1; i += n_thr)
-                    if (assign[i] < 0) assign[i] = n2;
-                break;
+            /* Consecutive-round stall detection with per-eps limit */
+            if (stall_limit > 0) {
+                if (tid == 0) {
+                    if (s_any_change == 0)
+                        s_stall_count++;
+                    else
+                        s_stall_count = 0;
+                }
+                __syncthreads();
+                if (s_stall_count >= stall_limit) {
+                    for (int i = tid; i < n1; i += n_thr)
+                        if (assign[i] < 0) assign[i] = n2;
+                    break;
+                }
             }
             ++iter;
         }
