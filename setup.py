@@ -112,7 +112,7 @@ class CudaBuildExt(build_ext):
 
 setup(
     name="edgeval",
-    version="0.1.0",
+    version="0.1.1",
     description="GPU-accelerated edge detection evaluation (ODS/OIS/AP/R50)",
     long_description=open("README.md").read() if os.path.isfile("README.md") else "",
     long_description_content_type="text/markdown",
