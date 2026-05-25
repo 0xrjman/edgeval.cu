@@ -146,8 +146,6 @@ def gpu_edges_eval_img(edge_prob, gt_path, thrs=99, max_dist=0.0075,
         thrs_vals = np.asarray(thrs)
 
     # Pre-build pred coords per threshold (batched GPU thinning)
-    pred_tensors = []
-    pred_binary = []
 
     # Stack all binary masks, thin on GPU in one batch
     binary_masks = []
@@ -159,13 +157,18 @@ def gpu_edges_eval_img(edge_prob, gt_path, thrs=99, max_dist=0.0075,
     if thin:
         masks_t = _gpu_thin_batch(masks_t)
 
-    # Extract per-threshold results
+    # Extract per-threshold coords directly on GPU (no download+reupload)
+    pred_tensors = []
+    pred_counts = []
+
     for k_idx in range(k):
-        e1 = masks_t[k_idx].cpu().numpy()
-        pred_binary.append(e1)
-        coords = np.column_stack(np.where(e1)).astype(np.float32)
-        if len(coords) > 0:
-            pred_tensors.append(torch.from_numpy(coords).cuda())
+        n_pred = int(masks_t[k_idx].sum().item())
+        pred_counts.append(n_pred)
+        if n_pred > 0:
+            # torch.nonzero gives (N, 2) with (y, x) — same order as np.where
+            # .contiguous() is REQUIRED: nonzero returns non-contiguous tensor
+            coords = torch.nonzero(masks_t[k_idx], as_tuple=False).to(torch.float32).contiguous()
+            pred_tensors.append(coords)
         else:
             pred_tensors.append(None)
 
@@ -276,8 +279,8 @@ def gpu_edges_eval_img(edge_prob, gt_path, thrs=99, max_dist=0.0075,
     # Aggregate results
     cnt_sum = np.zeros((k, 4), dtype=np.int64)
     cnt_sum[:, 1] = total_gt_val
-    for k_idx, e1 in enumerate(pred_binary):
-        cnt_sum[k_idx, 3] = int(e1.sum())
+    for k_idx, n_pred in enumerate(pred_counts):
+        cnt_sum[k_idx, 3] = n_pred
 
     matched_pred_sets = {}
     for p_idx, (k_idx, g_idx) in enumerate(prob_meta):
