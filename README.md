@@ -79,12 +79,12 @@ Most problems converge within 200-300 rounds at ε=0. We detect convergence by c
 
 ### Two Modes for Two Needs
 
-| | Simple (Training) | Extended (Paper) |
+| | Simple | Extended |
 |---|---|---|
 | Graph | Bipartite, real edges only | n×n, kOfN + diagonal overlay |
 | Speed | **0.47s/img** | ~5.7s/img |
-| ΔODS vs reference | +0.003 | <0.001 |
-| Use case | Every-epoch monitoring | Final evaluation |
+| ΔODS vs CSA reference | +0.003 | <0.001 |
+| Use case | Training monitoring | Exact CSA-compatible evaluation |
 
 ---
 
@@ -168,13 +168,13 @@ The +0.003 ODS bias comes from the Auction solver's `atomicMax` tie-breaking. It
 ```
 edgeval.cu/
 ├── edgeval_cu/              # Package
-│   ├── eval.py              # Main pipeline — gpu_edges_eval_img()
-│   ├── auction.py           # GPU Auction wrapper
-│   ├── _compile.py          # Lazy CUDA kernel compilation
+│   ├── eval.py              # Main pipeline — gpu_edges_eval_img(), gpu_edges_eval_dir()
+│   ├── auction.py           # GPU Auction solver
 │   ├── metrics.py           # ODS/OIS/AP/R50 computation
 │   ├── csa.py               # CPU CSA solver (exact reference)
 │   ├── nms_thin.py          # Zhang-Suen thinning LUTs
 │   ├── cli.py               # CLI: edgeval eval / show / nms
+│   ├── _dummy.c             # Triggers build_ext during pip install
 │   └── cuda/                # CUDA kernels
 │       ├── auction_kernel.cu    # ε-Scaling Auction solver
 │       ├── edge_builder.cu      # Fused edge builder
@@ -184,6 +184,7 @@ edgeval.cu/
 ├── docs/
 │   ├── benchmarks.md        # Detailed benchmarks & config sweep
 │   └── optimization.md      # 8-stage optimization journey (5.7s→0.47s)
+├── setup.py                 # Build script with CUDA compilation
 └── README.md
 ```
 
