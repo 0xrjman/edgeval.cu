@@ -7,8 +7,11 @@ import numpy as np
 from collections import namedtuple
 from ctypes import *
 from scipy.spatial import cKDTree
+import os
 
-solver = cdll.LoadLibrary("cxx/lib/solve_csa.so")
+_lib_path = os.path.join(os.path.dirname(__file__), *([".."] * 3), "cxx", "lib", "solve_csa.so")
+_lib_path = os.path.realpath(_lib_path)
+solver = cdll.LoadLibrary(_lib_path)
 c_int_pointer = POINTER(c_int32)
 
 
@@ -293,7 +296,7 @@ def fast_match_edge_maps(bmap1, bmap2, max_dist, outlier_cost, need_cost=False):
     cnt_2 = bmap2_tree.query_ball_tree(bmap1_tree, r=max_dist)
     cnt_1 = np.array([len(c) for c in cnt_1])
     cnt_2 = np.array([len(c) for c in cnt_2])
-    matchable1, matchable2 = np.zeros_like(bmap1, dtype=np.bool), np.zeros_like(bmap2, dtype=np.bool)
+    matchable1, matchable2 = np.zeros_like(bmap1, dtype=bool), np.zeros_like(bmap2, dtype=bool)
     points_1, points_2 = bmap1_points[cnt_1 > 0], bmap2_points[cnt_2 > 0]
     matchable1[points_1[:, 0], points_1[:, 1]], matchable2[points_2[:, 0], points_2[:, 1]] = True, True
 

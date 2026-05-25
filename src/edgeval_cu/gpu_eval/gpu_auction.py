@@ -48,9 +48,11 @@ def _build_pe_start(edge_person, n_persons_list, edge_starts):
     return pe_start, pe_offset
 
 
-def batch_solve(problems, verbose=False):
-    """Solve batch of assignment problems on GPU."""
-    lib = _get_lib()
+_CHUNK_SIZE = 32
+
+
+def _solve_chunk(problems, lib, verbose):
+    """Solve a chunk of problems on GPU (fits in device memory)."""
     P = len(problems)
     if P == 0:
         return []
@@ -102,4 +104,24 @@ def batch_solve(problems, verbose=False):
         n1 = h_n_persons[p]
         results.append(h_assignment[offset:offset + n1].copy())
         offset += n1
+    return results
+
+
+def batch_solve(problems, verbose=False):
+    """Solve batch of assignment problems on GPU.
+
+    Chunks problems to avoid GPU memory exhaustion.
+    """
+    lib = _get_lib()
+    if not problems:
+        return []
+
+    total_persons = sum(p['n_persons'] for p in problems)
+    # Rough memory estimate: pe_start dominates at 4 * (total_persons + P) bytes
+    # plus edges, prices, etc.  Chunk at ~32 problems to stay safe.
+    results = []
+    for start in range(0, len(problems), _CHUNK_SIZE):
+        chunk = problems[start:start + _CHUNK_SIZE]
+        chunk_results = _solve_chunk(chunk, lib, verbose)
+        results.extend(chunk_results)
     return results

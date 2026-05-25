@@ -358,6 +358,8 @@ int auction_solve_batch(
         total_persons += h_n_persons[p];
         total_objects += h_n_objects[p];
     }
+    /* pe_start has sum(n1+1) = total_persons + P entries */
+    int pe_start_len = total_persons + P;
 
     if (verbose) {
         printf("[auction] P=%d persons=%d objects=%d edges=%d\n",
@@ -394,7 +396,7 @@ int auction_solve_batch(
     CUDA_CHECK(cudaMalloc(&d_pk,   total_objects * sizeof(uint64_t)));
     CUDA_CHECK(cudaMalloc(&d_po,  (P + 1) * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_oo,  (P + 1) * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&d_pes, (total_persons + 1) * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_pes, pe_start_len * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_peo, (P + 1) * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_own, total_objects * sizeof(int)));
 
@@ -417,7 +419,7 @@ int auction_solve_batch(
                           cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_oo,  h_oo,         (P + 1) * sizeof(int),
                           cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_pes, h_pe_start,   (total_persons + 1) * sizeof(int),
+    CUDA_CHECK(cudaMemcpy(d_pes, h_pe_start,   pe_start_len * sizeof(int),
                           cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_peo, h_pe_offset,  (P + 1) * sizeof(int),
                           cudaMemcpyHostToDevice));

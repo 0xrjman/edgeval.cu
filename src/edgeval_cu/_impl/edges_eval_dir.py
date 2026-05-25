@@ -7,11 +7,57 @@ import multiprocessing as mp
 from shutil import rmtree
 from scipy.io import loadmat
 from scipy.interpolate import interp1d
+from scipy.spatial import cKDTree
 
 from .bwmorph_thin import bwmorph_thin
-from .correspond_pixels import correspond_pixels
+from .cpu_auction import build_problem, solve_one as auction_solve_one
 
 eps = 2e-6
+
+
+def _auction_match(e1_binary, g_binary, max_dist_px, outlier_cost):
+    """Replace correspond_pixels: use auction on simple bipartite graph.
+
+    Returns (match_pred_img, match_gt_img, cost, oc) matching the
+    correspond_pixels interface but using the deterministic auction
+    algorithm on a simple bipartite graph (same as GPU pipeline).
+    """
+    prob = build_problem(e1_binary, g_binary, max_dist_px, outlier_cost)
+    H, W = e1_binary.shape
+    match_pred = np.zeros((H, W), dtype=np.int32)
+    match_gt = np.zeros((H, W), dtype=np.int32)
+
+    if prob is None:
+        return match_pred, match_gt, 0.0, outlier_cost
+
+    assign = auction_solve_one(prob)
+    n2 = prob['n_objects']
+
+    pred_pixels = np.stack(np.where(e1_binary), axis=1)
+    gt_pixels = np.stack(np.where(g_binary), axis=1)
+
+    matched_pred = assign[assign < n2]
+    matched_persons = np.where(assign < n2)[0]
+
+    for idx in range(len(matched_persons)):
+        p = matched_persons[idx]
+        j = assign[p]
+        py, px = pred_pixels[p]
+        gy, gx = gt_pixels[j]
+        # Encode match value: (partner_x * height + partner_y + 1) (same format as correspond_pixels)
+        match_pred[py, px] = int(gx * H + gy + 1)
+        match_gt[gy, gx] = int(px * H + py + 1)
+
+    return match_pred, match_gt, 0.0, outlier_cost
+
+
+def _compute_max_dist(edge_shape, max_dist_ratio):
+    """Compute pixel-level max_dist and outlier_cost from ratio."""
+    H, W = edge_shape
+    idiag = np.sqrt(H * H + W * W)
+    max_dist_px = max_dist_ratio * idiag
+    oc = 100 * max_dist_px
+    return max_dist_px, oc
 
 
 def edges_eval_img(im, gt, out="", thrs=99, max_dist=0.0075, thin=True, need_v=False, workers=1):
@@ -34,7 +80,9 @@ def edges_eval_img(im, gt, out="", thrs=99, max_dist=0.0075, thin=True, need_v=F
     except Exception:
         gt = [g.item()[0] for g in loadmat(gt)["groundTruth"][0]]
 
-    cnt_sum_r_p = np.zeros((k, 4), dtype=np.int)
+    max_dist_px, oc = _compute_max_dist(edge.shape, max_dist)
+
+    cnt_sum_r_p = np.zeros((k, 4), dtype=np.int64)
     v = np.zeros((*edge.shape, 3, k), dtype=np.float32)
 
     if workers == 1:
@@ -42,17 +90,17 @@ def edges_eval_img(im, gt, out="", thrs=99, max_dist=0.0075, thin=True, need_v=F
             e1 = edge >= max(eps, thrs[k_])
             if thin:
                 e1 = bwmorph_thin(e1)
-            match_e, match_g = np.zeros_like(edge, dtype=bool), np.zeros_like(edge, dtype=np.int)
-            all_g = np.zeros_like(edge, dtype=np.int)
+            match_e, match_g = np.zeros_like(edge, dtype=bool), np.zeros_like(edge, dtype=np.int64)
+            all_g = np.zeros_like(edge, dtype=np.int64)
             for g in gt:
-                match_e1, match_g1, _, _ = correspond_pixels(e1, g, max_dist)
+                match_e1, match_g1, _, _ = _auction_match(e1, g, max_dist_px, oc)
                 match_e = np.logical_or(match_e, match_e1 > 0)
                 match_g = match_g + (match_g1 > 0)
                 all_g += g
             cnt_sum_r_p[k_, :] = [np.sum(match_g), np.sum(all_g), np.count_nonzero(match_e), np.count_nonzero(e1)]
             if need_v:
                 cs = np.array([[1, 0, 0], [0, 0.7, 0], [0.7, 0.8, 1]]) - 1
-                fp = e1.astype(np.int) - match_e.astype(np.int)
+                fp = e1.astype(np.int64) - match_e.astype(np.int64)
                 tp = match_e
                 fn = (all_g - match_g) / len(gt)
                 for g_ in range(3):
@@ -62,15 +110,15 @@ def edges_eval_img(im, gt, out="", thrs=99, max_dist=0.0075, thin=True, need_v=F
     else:
         assert not need_v
 
-        def _process_thrs_loop(_edge, _gt, _eps, _thrs, _thin, _max_dist, _indices, _queue):
+        def _process_thrs_loop(_edge, _gt, _eps, _thrs, _thin, _md_px, _oc, _indices, _queue):
             for _k in _indices:
                 _e1 = _edge >= max(_eps, _thrs[_k])
                 if _thin:
                     _e1 = bwmorph_thin(_e1)
-                _match_e, _match_g = np.zeros_like(_edge, dtype=bool), np.zeros_like(_edge, dtype=np.int)
-                _all_g = np.zeros_like(_edge, dtype=np.int)
+                _match_e, _match_g = np.zeros_like(_edge, dtype=bool), np.zeros_like(_edge, dtype=np.int64)
+                _all_g = np.zeros_like(_edge, dtype=np.int64)
                 for _g in _gt:
-                    _match_e1, _match_g1, _, _ = correspond_pixels(_e1, _g, _max_dist)
+                    _match_e1, _match_g1, _, _ = _auction_match(_e1, _g, _md_px, _oc)
                     _match_e = np.logical_or(_match_e, _match_e1 > 0)
                     _match_g = _match_g + (_match_g1 > 0)
                     _all_g += _g
@@ -83,7 +131,7 @@ def edges_eval_img(im, gt, out="", thrs=99, max_dist=0.0075, thin=True, need_v=F
         queue = mp.SimpleQueue()
         split_indices = np.array_split(np.arange(k), workers)
         pool = [mp.Process(target=_process_thrs_loop,
-                           args=(edge, gt, eps, thrs, thin, max_dist, split_indices[_], queue))
+                           args=(edge, gt, eps, thrs, thin, max_dist_px, oc, split_indices[_], queue))
                 for _ in range(workers)]
         [thread.start() for thread in pool]
         process_cnt_k = 0

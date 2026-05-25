@@ -20,7 +20,7 @@ G123_LUT = np.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
                      0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                      0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0,
                      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 1,
-                     0, 0, 0], dtype=np.bool)
+                     0, 0, 0], dtype=bool)
 
 G123P_LUT = np.array([0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0,
                       0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -33,7 +33,7 @@ G123P_LUT = np.array([0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0
                       0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0,
                       1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 1,
                       0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                      0, 0, 0], dtype=np.bool)
+                      0, 0, 0], dtype=bool)
 
 
 def bwmorph_thin(image, n_iter=None):
@@ -147,14 +147,14 @@ def bwmorph_thin(image, n_iter=None):
         # count down to iteration limit (or endlessly negative)
         n -= 1
 
-    return skel.astype(np.bool)
+    return skel.astype(bool)
 
 
 """
 # here's how to make the LUTs
 
 def nabe(n):
-    return np.array([n>>i&1 for i in range(0,9)]).astype(np.bool)
+    return np.array([n>>i&1 for i in range(0,9)]).astype(bool)
 
 def hood(n):
     return np.take(nabe(n), np.array([[3, 2, 1],
