@@ -1,4 +1,4 @@
-"""Build script for edgeval-cu — compiles CUDA kernels at pip install time."""
+"""Build script for edgeval — compiles CUDA kernels at pip install time."""
 import os
 import sys
 import subprocess
@@ -85,7 +85,7 @@ class CudaBuildExt(build_ext):
         """Compile .cu -> .so into the package's cuda/ directory."""
         nvcc = _detect_nvcc()
         arch = _detect_arch()
-        print(f"edgeval-cu: compiling CUDA kernels (nvcc, arch={arch})")
+        print(f"edgeval: compiling CUDA kernels (nvcc, arch={arch})")
 
         # Source is in the package directory (edgeval_cu/cuda/)
         pkg_dir = os.path.join(self.build_lib, "edgeval_cu")
@@ -111,7 +111,7 @@ class CudaBuildExt(build_ext):
 
 
 setup(
-    name="edgeval-cu",
+    name="edgeval",
     version="0.1.0",
     description="GPU-accelerated edge detection evaluation (ODS/OIS/AP/R50)",
     long_description=open("README.md").read() if os.path.isfile("README.md") else "",
@@ -129,7 +129,6 @@ setup(
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
-        "Programming Language :: CUDA",
         "Topic :: Scientific/Engineering :: Image Processing",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
     ],

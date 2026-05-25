@@ -120,7 +120,7 @@ TOTAL            0.47s
 ## Quick Start
 
 ```bash
-pip install edgeval-cu
+pip install edgeval
 ```
 
 Requires Python 3.8+, PyTorch, CUDA toolkit (nvcc), NumPy, SciPy, OpenCV, tqdm, click.
