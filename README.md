@@ -125,7 +125,7 @@ pip install edgeval-cu
 
 Requires Python 3.8+, PyTorch, CUDA toolkit (nvcc), NumPy, SciPy, OpenCV, tqdm, click.
 
-CUDA kernels are compiled on first import — no extra build step needed. If compilation fails, install system dependencies first:
+CUDA kernels are compiled at install time — your machine needs a GPU and nvcc. If compilation fails:
 
 ```bash
 # Debian/Ubuntu

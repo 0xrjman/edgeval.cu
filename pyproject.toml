@@ -44,12 +44,15 @@ edgeval = "edgeval_cu.cli:cli"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["edgeval_cu", "edgeval_cu.*"]
+include = ["edgeval_cu", "edgeval_cu.*", "cxx", "cxx.*"]
 
 [tool.setuptools.package-data]
 edgeval_cu = [
     "cuda/*.cu",
     "cuda/*.so",
+]
+cxx = [
+    "lib/*.so",
 ]
 
 [tool.setuptools]
