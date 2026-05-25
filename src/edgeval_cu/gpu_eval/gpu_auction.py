@@ -120,6 +120,17 @@ def build_extended_problem(n1, n2, real_edges, oc_int):
     }
 
 
+# ── RNG seeding (compatibility with C++ kOfN interface) ─────────────
+
+def reseed_kofn(seed):
+    """Reset the numpy random state for reproducible kOfN sampling.
+    
+    In the C++ kOfN path, this called reseed_random() via ctypes.
+    With the vectorized numpy kOfN, this is equivalent to np.random.seed().
+    """
+    np.random.seed(int(seed))
+
+
 # ── GPU library loader ──────────────────────────────────────────────
 
 def _get_lib():

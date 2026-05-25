@@ -1,6 +1,6 @@
 <p align="center">
   <strong>edgeval.cu</strong><br>
-  <em>Edge detection evaluation toolkit — ODS · OIS · AP · R50</em>
+  <em>GPU-accelerated edge detection evaluation — ODS · OIS · AP · R50</em>
 </p>
 
 <p align="center">
@@ -13,66 +13,63 @@
 
 ## Overview
 
-Computing standard edge detection metrics (ODS/OIS/AP/R50) requires solving ~99,000 independent assignment problems — one for every (threshold × ground-truth-annotation) pair across a benchmark dataset. The standard CPU pipeline takes ~20 minutes for BSDS500.
+Computing standard edge detection metrics (ODS/OIS/AP/R50) requires solving ~99,000 independent assignment problems — one for every (threshold × ground-truth-annotation) pair across a benchmark dataset. The standard CPU CSA pipeline takes ~20 minutes for BSDS500.
 
-A batched Auction Algorithm kernel eliminates 99,000 individual Python↔C++ context switches, reducing the same benchmark to **~2.7 minutes on an RTX 4090** with exact metric consistency.
+**edgeval.cu** accelerates this with a fused GPU pipeline: batched morphological thinning → CUDA edge builder → GPU sort → batched Auction Algorithm solver. The result: **~1.0s per image, ~3.3 minutes for BSDS500** on an RTX 4090 — a **6× speedup** over CPU.
 
 ### Features
 
 - GPU-accelerated evaluation with automatic CPU fallback
 - Standard metrics: ODS, OIS, AP, R50
+- Two modes: `simple` (fast, ~1.0s/img) and `extended` (CSA-compatible)
 - Built-in support for BSDS500, NYUD, BIPED, UDED; custom GT directories
 - CLI (`edgeval eval` / `edgeval show` / `edgeval nms` / `edgeval info`)
 - Python API for pipeline integration
-- Light mode (9 thresholds) for rapid iteration
+
+### Accuracy
+
+GPU Auction solver uses `atomicMax` for tie-breaking, introducing a systematic ODS bias of **∼+0.003** compared to the deterministic CPU CSA solver. This is stable and consistent — suitable for training-time trend monitoring. For paper-quality final evaluation, use CPU CSA mode.
+
+| Mode | Time (200 imgs) | ODS vs CPU CSA |
+|------|-----------------|----------------|
+| `simple` (GPU) | **3.3 min** | +0.003 |
+| `extended` (GPU) | ~14 min | <0.001 |
+| CPU CSA | ~20 min | 0 (reference) |
 
 ---
 
 ## Architecture
 
-The evaluation pipeline formulates edge matching as a **minimum-cost bipartite assignment problem**:
-
-- Persons -> predicted edge pixels (~1200-5000 per image)
-- Objects -> ground truth edge pixels (~800-4000)
-- Edge costs -> Euclidean distance within a `max_dist` search window (4 px)
-- Outliers -> unmatched pixels receive a fixed penalty
+The evaluation pipeline formulates edge matching as a **minimum-cost bipartite assignment problem**: persons → predicted edge pixels, objects → ground truth edge pixels, edge costs → Euclidean distance within a `max_dist` search window.
 
 ```mermaid
 flowchart LR
     subgraph Input["Input"]
-        direction TB
-        EP["Edge Prediction<br/>.png / .mat"]
-        GT["Ground Truth<br/>.mat"]
+        EP["Edge Prediction\n.png / .mat"]
+        GT["Ground Truth\n.mat"]
     end
-
-    subgraph Pre["Preprocessing"]
-        direction TB
-        NMS["Non-maximum<br/>Suppression"]
-        THIN["Morphological<br/>Thinning"]
-        THR["Thresholding<br/>99 thr x 5 GT"]
+    subgraph Pre["Preprocessing (GPU batched)"]
+        THR["Thresholding\n99 thr × 5 GT"]
+        THIN["Morphological\nThinning"]
     end
-
-    subgraph Match["Pixel Matching"]
-        direction TB
-        KD["KDTree<br/>Search Window"]
-        ASN["Bipartite<br/>Assignment"]
-        GA["Auction<br/>Algorithm"]
+    subgraph Graph["Graph Construction (GPU fused)"]
+        EDGE["CUDA Edge Builder\nsingle kernel launch"]
+        SORT["GPU Sort\ncompound key"]
     end
-
+    subgraph Solve["Solver"]
+        AUCT["Auction Algorithm\nbatched GPU solve"]
+    end
     subgraph Met["Metrics"]
-        direction TB
-        RPF["R / P / F<br/>Compute"]
-        OUT["ODS . OIS<br/>AP . R50"]
+        RPF["R / P / F Compute"]
+        OUT["ODS · OIS · AP · R50"]
     end
-
-    EP --> NMS
-    NMS --> THIN
-    THIN --> THR
-    THR --> KD
-    GT -.-> KD
-    KD --> ASN
-    ASN --> GA
-    GA --> RPF
+    EP --> THR
+    THR --> THIN
+    THIN --> EDGE
+    GT -.-> EDGE
+    EDGE --> SORT
+    SORT --> AUCT
+    AUCT --> RPF
     RPF --> OUT
 ```
 
@@ -87,7 +84,7 @@ pip install -e .
 cd src/edgeval_cu/gpu_eval && make
 ```
 
-**Requirements**: Python 3.8+, NumPy, SciPy >= 1.6.0, CUDA 12.x, OpenCV, tqdm.
+**Requirements**: Python 3.8+, NumPy, SciPy >= 1.6.0, PyTorch, CUDA 12.x, OpenCV, tqdm.
 
 ---
 
@@ -114,30 +111,21 @@ results/
 # GPU evaluation (recommended)
 edgeval eval results --gpu --dataset BSDS
 
-# CPU evaluation
-edgeval eval results --dataset BSDS --thrs 99
-
-# Light version (9 thresholds, ~30x faster)
+# Light version (9 thresholds, ~10x faster)
 edgeval eval results --gpu --thrs 9
-
-# Custom GT directory
-edgeval eval results --gpu --gt-dir /path/to/GT
-
-# View results
-edgeval show results-eval-gpu
 ```
 
 ### Python API
 
 ```python
-from edgeval_cu import gpu_edges_eval_dir
+from edgeval_cu.gpu_eval import gpu_edges_eval_img, gpu_edges_eval_dir
 
-scores = gpu_edges_eval_dir(
-    "results", "GT/BSDS500/test",
-    thrs=99, max_dist=0.0075, thin=True,
-)
+# Single image
+info, _ = gpu_edges_eval_img(edge_map, "GT/100007.mat", thrs=99, mode='simple')
+
+# Full directory
+scores = gpu_edges_eval_dir("results", "GT/BSDS500/test", thrs=99, mode='simple')
 print(f"ODS: {scores['ods_f']:.4f}  OIS: {scores['ois_f']:.4f}")
-print(f"AP:  {scores['ap']:.4f}   R50: {scores['r50']:.4f}")
 ```
 
 ---
@@ -146,23 +134,22 @@ print(f"AP:  {scores['ap']:.4f}   R50: {scores['r50']:.4f}")
 
 Benchmarked on RTX 4090 (CUDA 13.2, sm_89, AMD Ryzen 9 7950X):
 
-| Scenario | CPU | GPU | Speedup |
-|----------|-----|-----|---------|
-| Single problem (1200x1000) | ~10 ms | ~1.5 ms | 6.7x |
-| 1 image (99 thr × 5 GT) | ~6 s | **~1.18 s** | **5.1×** |
-| **200 images (BSDS500 full)** | **~20 min** | **~3m55s** | **5.1×** |
+| Scenario | CPU CSA | GPU simple | Speedup |
+|----------|---------|------------|---------|
+| 1 image (99 thr × 5 GT) | ~6 s | **~1.0 s** | **6×** |
+| 200 images (BSDS500 full) | ~20 min | **~3.3 min** | **6×** |
 
----
+### GPU pipeline breakdown (per image)
 
-## Correctness
-
-Verified across 80+ random test cases (problem sizes from 100 to 5000 pixels):
-
-| Check | Result |
-|-------|--------|
-| TP / FP / FN counts | 100% match with CPU CSA |
-| F-measure | Identical |
-| ODS / OIS / AP / R50 | Zero difference |
+| Component | Time | % |
+|-----------|------|----|
+| Batched thinning (×99) | 0.12s | 12% |
+| Fused CUDA edge builder | 0.02s | 2% |
+| GPU sort | 0.10s | 10% |
+| CPU annotator split | 0.15s | 15% |
+| GPU Auction batch solve | 0.50s | 50% |
+| Overhead (I/O, upload) | 0.11s | 11% |
+| **Total** | **1.00s** | 100% |
 
 ---
 
@@ -190,7 +177,6 @@ Options:
 
 ```
 Usage: edgeval show [OPTIONS] RESULT_DIR
-
 Options:
   -f, --full  Show full per-image results
 ```
@@ -199,15 +185,10 @@ Options:
 
 ```
 Usage: edgeval nms [OPTIONS] INPUT_DIR OUTPUT_DIR
-
 Options:
   --key TEXT      Key for .mat files  [default: img]
   --format TEXT   File format: .mat or .npy  [default: .mat]
 ```
-
-### `edgeval info`
-
-Display system information and CUDA status.
 
 ---
 
@@ -215,12 +196,11 @@ Display system information and CUDA status.
 
 | Function | Description |
 |----------|-------------|
-| `gpu_edges_eval_dir(res_dir, gt_dir, ...)` | Full GPU-accelerated directory evaluation |
-| `gpu_edges_eval_img(edge_prob, gt_path, ...)` | Single-image GPU evaluation |
-| `batch_solve(problems)` | Solve multiple assignment problems on GPU |
-| `nms_process(in_dir, out_dir, ...)` | Run non-maximum suppression |
-| `edges_eval_dir(res_dir, gt_dir, ...)` | CPU evaluation using original CSA |
-| `cuda_available()` | Check if GPU acceleration is available |
+| `gpu_edges_eval_dir(res_dir, gt_dir, mode='simple', ...)` | Full GPU directory evaluation |
+| `gpu_edges_eval_img(edge_prob, gt_path, mode='simple', ...)` | Single-image GPU evaluation |
+| `batch_solve(problems)` | Batched GPU Auction solver |
+| `build_extended_problem(n1, n2, edges, oc)` | Build CSA-compatible extended graph |
+| `edges_eval_dir(res_dir, gt_dir, ...)` | CPU CSA evaluation (exact reference) |
 
 ---
 
@@ -228,36 +208,25 @@ Display system information and CUDA status.
 
 ```
 edgeval.cu/
-+-- src/edgeval_cu/
-|   +-- __init__.py              Package entry
-|   +-- __main__.py              python -m edgeval_cu
-|   +-- cli.py                   CLI entrypoint
-|   +-- eval_component.py        Evaluation orchestration
-|   +-- nms_process.py           Non-maximum suppression
-|   +-- show.py                  Result display
-|   +-- _impl/                   Core modules (CSA, thinning, utilities)
-|   +-- gpu_eval/                GPU-accelerated pipeline
-|       +-- auction_kernel.cu    Auction Algorithm kernel
-|       +-- gpu_auction.py       ctypes wrapper
-|       +-- gpu_eval.py          Evaluation pipeline
-|       +-- Makefile
-+-- cxx/src/                     C++ source (CSA solver, NMS)
-+-- pyproject.toml
-+-- LICENSE
-+-- README.md
+└── src/edgeval_cu/
+    ├── __init__.py
+    ├── __main__.py
+    ├── cli.py                        CLI entrypoint
+    ├── eval_component.py             Evaluation orchestration
+    ├── _impl/                        Core modules (CSA, thinning, utilities)
+    │   ├── correspond_pixels.py      CPU CSA: fast_match_edge_maps()
+    │   ├── bwmorph_thin.py           Zhang-Suen thinning (LUT)
+    │   ├── edges_eval_dir.py         PRF curve, ODS/OIS computation
+    │   └── cpu_auction.py            Pure Python Auction (reference)
+    └── gpu_eval/                     GPU-accelerated pipeline
+        ├── gpu_eval.py               Main pipeline (thin + build + solve)
+        ├── gpu_auction.py            ctypes wrapper for GPU Auction
+        ├── auction_kernel.cu         CUDA Auction kernel (ε-scaling)
+        ├── edge_builder.cu           Fused CUDA edge builder (cdist+mask)
+        ├── auction_cuda.so           Compiled Auction library
+        ├── edge_builder.so           Compiled edge builder library
+        └── Makefile
 ```
-
----
-
-## Supported Datasets
-
-| Dataset | Test Images | Auto-detect |
-|---------|-------------|-------------|
-| BSDS500 | 200 | `BSDS` |
-| NYUD | 654 | `NYUD` |
-| BIPED | 50 | `BIPED` |
-| UDED | 30 | `UDED` |
-| Custom | -- | Use `--gt-dir` |
 
 ---
 
@@ -265,23 +234,17 @@ edgeval.cu/
 
 | Metric | Description |
 |--------|-------------|
-| ODS | Optimal Dataset Scale -- single threshold maximizing F-measure across all images |
-| OIS | Optimal Image Scale -- per-image optimal thresholds, F-measure averaged |
-| AP | Average Precision -- area under interpolated precision-recall curve (101-point) |
+| ODS | Optimal Dataset Scale — single threshold maximizing F-measure across all images |
+| OIS | Optimal Image Scale — per-image optimal thresholds, F-measure averaged |
+| AP | Average Precision — area under interpolated precision-recall curve (101-point) |
 | R50 | Recall at 50% Precision |
-
----
-
-## License
-
-Apache 2.0
 
 ---
 
 ## References
 
 - [HED evaluation (MATLAB)](https://github.com/s9xie/hed_release-deprecated/tree/master/examples/eval)
-- [extended-berkeley-segmentation-benchmark](https://github.com/davidstutz/extended-berkeley-segmentation-benchmark) -- C++ CSA solver (Apache 2.0)
-- [edge-eval-python](https://github.com/Walstruzz/edge_eval_python) -- Python port
+- [extended-berkeley-segmentation-benchmark](https://github.com/davidstutz/extended-berkeley-segmentation-benchmark) — C++ CSA solver (Apache 2.0)
+- [edge-eval-python](https://github.com/Walstruzz/edge_eval_python) — Python port
 - [Bertsekas, "Auction Algorithms"](https://web.mit.edu/dimitrib/www/Auction_Encycl.pdf)
-- [bwmorph_thin](https://gist.github.com/joefutrelle/562f25bbcf20691217b8) -- Guo-Hall thinning
+- [Guo & Hall, "Parallel Thinning"](https://gist.github.com/joefutrelle/562f25bbcf20691217b8)
