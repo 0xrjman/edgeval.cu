@@ -59,18 +59,16 @@
 #define MAX_THREADS 256
 
 /** Maximum bidding iterations per epsilon level. */
-#define ITERS_EPS8   100
-#define ITERS_EPS4   200
-#define ITERS_EPS2   400
-#define ITERS_EPS1   500
-#define ITERS_EPS0  5000
+#define DEFAULT_ITERS_EPS8   100
+#define DEFAULT_ITERS_EPS4   200
+#define DEFAULT_ITERS_EPS2   400
+#define DEFAULT_ITERS_EPS1   500
+#define DEFAULT_ITERS_EPS0   500
 
-/** Consecutive no-change rounds before stall at each epsilon level.
- *  Higher values = more patient convergence.
- *  eps=0 has NO stall limit — runs until assigned or iter limit. */
-#define STALL_EPS_8_4_2  3
-#define STALL_EPS_1     10
-#define STALL_EPS_0    50   /* eps=0: stall after 50 consecutive no-change rounds */
+/** Consecutive no-change rounds before stall at each epsilon level. */
+#define DEFAULT_STALL_EPS_HIGH  3
+#define DEFAULT_STALL_EPS_1    10
+#define DEFAULT_STALL_EPS_0   200
 
 /**
  * @def CUDA_CHECK(ans)
@@ -148,6 +146,8 @@ __device__ __forceinline__ int unpack_bidder(uint64_t packed) {
  * @param[in]  oo_start    [P + 1] Prefix sum of objects per problem.
  * @param[in]  pe_start    [total_persons + 1] Edge-range per person (flat).
  * @param[in]  pe_offset   [P + 1] Section start in pe_start per problem.
+ * @param[in]  eps_iters   [5] Max iters per epsilon level.
+ * @param[in]  stall_limits [5] Consecutive no-change rounds before stall.
  * @param[in]  P           Number of problems in this batch.
  */
 __global__ void auction_kernel(
@@ -165,6 +165,8 @@ __global__ void auction_kernel(
     const int  * __restrict__ oo_start,
     const int  * __restrict__ pe_start,
     const int  * __restrict__ pe_offset,
+    const int  * __restrict__ eps_iters,
+    const int  * __restrict__ stall_limits,
     int          P
 ) {
     int p = blockIdx.x;
@@ -198,17 +200,12 @@ __global__ void auction_kernel(
 
     /* epsilon-scaling: 8 -> 4 -> 2 -> 1 -> 0 */
     int eps_values[] = {8, 4, 2, 1, 0};
-    int eps_iters[]  = {ITERS_EPS8, ITERS_EPS4, ITERS_EPS2,
-                        ITERS_EPS1, ITERS_EPS0};
     int n_eps_levels = 5;
 
     for (int eidx = 0; eidx < n_eps_levels; ++eidx) {
         int eps   = eps_values[eidx];
         int limit = eps_iters[eidx];
-        int stall_limit;
-        if (eps >= 2)      stall_limit = STALL_EPS_8_4_2;
-        else if (eps == 1) stall_limit = STALL_EPS_1;
-        else               stall_limit = STALL_EPS_0;  /* 0 = disabled */
+        int stall_limit = stall_limits[eidx];
 
         for (int j = tid; j < n2; j += n_thr) {
             pk[j] = 0;
@@ -403,6 +400,7 @@ int auction_solve_batch(
     int *d_own = NULL;
     int *d_po = NULL, *d_oo = NULL;
     int *d_pes = NULL, *d_peo = NULL;
+    int *d_eps = NULL, *d_stall = NULL;
     cudaError_t err = cudaSuccess;
 
     /* ---------- Device allocation (all checked) ---------- */
@@ -421,6 +419,8 @@ int auction_solve_batch(
     CUDA_CHECK(cudaMalloc(&d_pes, pe_start_len * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_peo, (P + 1) * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&d_own, total_objects * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_eps, 5 * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_stall, 5 * sizeof(int)));
 
     /* ---------- Host -> Device copy (all checked) ---------- */
     CUDA_CHECK(cudaMemcpy(d_np,  h_n_persons,   P * sizeof(int),
@@ -446,6 +446,15 @@ int auction_solve_batch(
     CUDA_CHECK(cudaMemcpy(d_peo, h_pe_offset,  (P + 1) * sizeof(int),
                           cudaMemcpyHostToDevice));
 
+    /* Build eps_iters and stall_limits from defaults */
+    int h_eps[5] = {DEFAULT_ITERS_EPS8, DEFAULT_ITERS_EPS4, DEFAULT_ITERS_EPS2,
+                    DEFAULT_ITERS_EPS1, DEFAULT_ITERS_EPS0};
+    int h_stall[5] = {DEFAULT_STALL_EPS_HIGH, DEFAULT_STALL_EPS_HIGH,
+                      DEFAULT_STALL_EPS_HIGH, DEFAULT_STALL_EPS_1,
+                      DEFAULT_STALL_EPS_0};
+    CUDA_CHECK(cudaMemcpy(d_eps, h_eps, 5 * sizeof(int), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_stall, h_stall, 5 * sizeof(int), cudaMemcpyHostToDevice));
+
     /* ---------- Device memory initialization (all checked) ---------- */
     CUDA_CHECK(cudaMemset(d_as,  0xFF, total_persons * sizeof(int)));
     CUDA_CHECK(cudaMemset(d_pr,  0,    total_objects * sizeof(int)));
@@ -454,7 +463,8 @@ int auction_solve_batch(
     /* ---------- Launch kernel ---------- */
     auction_kernel<<<P, MAX_THREADS>>>(
         d_np, d_no, d_ep, d_eo, d_ec, d_oc, d_as,
-        d_pr, d_pk, d_own, d_po, d_oo, d_pes, d_peo, P
+        d_pr, d_pk, d_own, d_po, d_oo, d_pes, d_peo,
+        d_eps, d_stall, P
     );
 
     /* Combined kernel launch + sync error check (NVIDIA Samples style) */
@@ -472,6 +482,7 @@ int auction_solve_batch(
 
 cleanup:
     cudaFree(d_own);
+    cudaFree(d_eps); cudaFree(d_stall);
     cudaFree(d_np); cudaFree(d_no); cudaFree(d_es);
     cudaFree(d_ep); cudaFree(d_eo); cudaFree(d_ec);
     cudaFree(d_oc); cudaFree(d_as); cudaFree(d_pr);
