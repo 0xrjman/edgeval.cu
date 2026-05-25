@@ -5,12 +5,13 @@ if sys.version_info < (3, 8):
 from setuptools import setup, find_packages
 
 setup(
-    package_dir={"": "src"},
-    packages=find_packages(where="src", include=["edgeval_cu", "edgeval_cu.*"]),
+    package_dir={"": "."},
+    packages=find_packages(where=".", include=["edgeval_cu", "edgeval_cu.*"]),
     package_data={
         "edgeval_cu": [
             "cxx/lib/solve_csa.so",
-            "gpu_eval/auction_cuda.so",
+            "cuda/auction_cuda.so",
+            "cuda/edge_builder.so",
         ],
     },
     zip_safe=False,

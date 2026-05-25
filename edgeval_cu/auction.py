@@ -137,7 +137,7 @@ def _get_lib():
     global _lib
     if _lib is not None:
         return _lib
-    lib_path = os.path.join(os.path.dirname(__file__), 'auction_cuda.so')
+    lib_path = os.path.join(os.path.dirname(__file__), 'cuda', 'auction_cuda.so')
     if not os.path.exists(lib_path):
         raise RuntimeError("auction_cuda.so not found. Run 'make -C gpu_eval' first.")
     _lib = ctypes.CDLL(lib_path)

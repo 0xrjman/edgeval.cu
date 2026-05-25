@@ -43,13 +43,14 @@ Repository = "https://github.com/0xrjman/edgeval.cu"
 edgeval = "edgeval_cu.cli:cli"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
 include = ["edgeval_cu", "edgeval_cu.*"]
 
 [tool.setuptools.package-data]
 edgeval_cu = [
     "cxx/lib/solve_csa.so",
-    "gpu_eval/auction_cuda.so",
+    "cuda/auction_cuda.so",
+    "cuda/edge_builder.so",
 ]
 
 [tool.setuptools]

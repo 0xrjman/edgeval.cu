@@ -110,7 +110,7 @@ def eval_cmd(result_dir, gt_dir, dataset, gpu, full, thrs, max_dist,
 
     if gpu:
         try:
-            from .gpu_eval import gpu_edges_eval_dir
+            from .eval import gpu_edges_eval_dir
         except ImportError as e:
             click.echo(f"❌ GPU mode not available: {e}", err=True)
             click.echo("   Make sure CUDA toolkit is installed and auction_cuda.so is compiled.", err=True)
@@ -121,7 +121,7 @@ def eval_cmd(result_dir, gt_dir, dataset, gpu, full, thrs, max_dist,
             thin=not no_thin,
         )
     else:
-        from ._impl.edges_eval_dir import edges_eval_dir as cpu_eval
+        from .metrics import edges_eval_dir as cpu_eval
 
         # CPU mode runs the original pipeline
         if not_wait:
@@ -208,7 +208,7 @@ def info_cmd():
         click.echo("  CUDA:       ❌ Not available")
 
     # Check CPU solver
-    solver_path = os.path.join(os.path.dirname(__file__), 'cxx', 'lib', 'solve_csa.so')
+    solver_path = os.path.join(os.path.dirname(__file__), '..', 'cxx', 'lib', 'solve_csa.so')
     click.echo(f"  CPU Solver: {'✅ Found' if os.path.exists(solver_path) else '❌ Not found'}")
 
     # Check GPU solver

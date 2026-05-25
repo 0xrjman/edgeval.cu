@@ -9,7 +9,7 @@ from scipy.io import loadmat
 from scipy.interpolate import interp1d
 from scipy.spatial import cKDTree
 
-from .bwmorph_thin import bwmorph_thin
+from .nms_thin import bwmorph_thin
 from .cpu_auction import build_problem, solve_one as auction_solve_one
 
 eps = 2e-6

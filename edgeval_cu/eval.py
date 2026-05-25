@@ -13,9 +13,9 @@ import torch.nn.functional as F
 import ctypes
 from scipy.io import loadmat
 from scipy.interpolate import interp1d
-from .._impl.bwmorph_thin import G123_LUT, G123P_LUT
-from .._impl.edges_eval_dir import compute_rpf, find_best_rpf, eps as EVAL_EPS
-from .gpu_auction import batch_solve, build_extended_problem, reseed_kofn
+from .nms_thin import G123_LUT, G123P_LUT
+from .metrics import compute_rpf, find_best_rpf, eps as EVAL_EPS
+from .auction import batch_solve, build_extended_problem, reseed_kofn
 import os
 import glob
 from tqdm import tqdm
@@ -69,7 +69,7 @@ def _get_edge_lib():
     global _lib_edge
     if _lib_edge is not None:
         return _lib_edge
-    lib_path = os.path.join(os.path.dirname(__file__), 'edge_builder.so')
+    lib_path = os.path.join(os.path.dirname(__file__), 'cuda', 'edge_builder.so')
     if not os.path.exists(lib_path):
         raise RuntimeError("edge_builder.so not found. Run 'make -C gpu_eval' first.")
     _lib_edge = ctypes.CDLL(lib_path)

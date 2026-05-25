@@ -5,9 +5,9 @@ import numpy as np
 from scipy.io import loadmat
 from ctypes import *
 
-from ._impl.toolbox import conv_tri, grad2
+from .toolbox import conv_tri, grad2
 
-_cxx_dir = os.path.join(os.path.dirname(__file__), 'cxx', 'lib')
+_cxx_dir = os.path.join(os.path.dirname(__file__), '..', 'cxx', 'lib')
 solver = cdll.LoadLibrary(os.path.join(_cxx_dir, 'solve_csa.so'))
 c_float_pointer = POINTER(c_float)
 solver.nms.argtypes = [c_float_pointer, c_float_pointer, c_float_pointer,

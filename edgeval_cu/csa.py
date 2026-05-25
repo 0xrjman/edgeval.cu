@@ -9,7 +9,7 @@ from ctypes import *
 from scipy.spatial import cKDTree
 import os
 
-_lib_path = os.path.join(os.path.dirname(__file__), *([".."] * 3), "cxx", "lib", "solve_csa.so")
+_lib_path = os.path.join(os.path.dirname(__file__), "..", "cxx", "lib", "solve_csa.so")
 _lib_path = os.path.realpath(_lib_path)
 solver = cdll.LoadLibrary(_lib_path)
 c_int_pointer = POINTER(c_int32)

@@ -1,7 +1,7 @@
 """Evaluation component — orchestrates NMS + eval for a result directory."""
 import os
 from .nms_process import nms_process
-from ._impl.edges_eval_dir import edges_eval_dir
+from .metrics import edges_eval_dir
 
 
 def eval_one_epoch(root, dataset, full=False, key="img", file_format=".mat"):
