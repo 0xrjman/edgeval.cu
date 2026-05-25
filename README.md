@@ -15,7 +15,7 @@
 
 Computing standard edge detection metrics (ODS/OIS/AP/R50) requires solving ~99,000 independent assignment problems — one for every (threshold × ground-truth-annotation) pair across a benchmark dataset. The standard CPU CSA pipeline takes ~20 minutes for BSDS500.
 
-**edgeval.cu** accelerates this with a fused GPU pipeline: batched morphological thinning → CUDA edge builder → GPU sort → batched Auction Algorithm solver. The result: **~1.0s per image, ~3.3 minutes for BSDS500** on an RTX 4090 — a **6× speedup** over CPU.
+**edgeval.cu** accelerates this with a fused GPU pipeline: batched morphological thinning → CUDA edge builder → GPU sort → batched Auction Algorithm solver. The result: **~0.6s per image, ~2.0 minutes for BSDS500** on an RTX 4090 — a **10× speedup** over CPU.
 
 ### Features
 
@@ -136,20 +136,20 @@ Benchmarked on RTX 4090 (CUDA 13.2, sm_89, AMD Ryzen 9 7950X):
 
 | Scenario | CPU CSA | GPU simple | Speedup |
 |----------|---------|------------|---------|
-| 1 image (99 thr × 5 GT) | ~6 s | **~1.0 s** | **6×** |
-| 200 images (BSDS500 full) | ~20 min | **~3.3 min** | **6×** |
+| 1 image (99 thr × 5 GT) | ~6 s | **~0.6 s** | **10×** |
+| 200 images (BSDS500 full) | ~20 min | **~2.0 min** | **10×** |
 
 ### GPU pipeline breakdown (per image)
 
 | Component | Time | % |
 |-----------|------|----|
-| Batched thinning (×99) | 0.12s | 12% |
-| Fused CUDA edge builder | 0.02s | 2% |
-| GPU sort | 0.10s | 10% |
-| CPU annotator split | 0.15s | 15% |
-| GPU Auction batch solve | 0.50s | 50% |
-| Overhead (I/O, upload) | 0.11s | 11% |
-| **Total** | **1.00s** | 100% |
+| Batched thinning (×99) | 0.12s | 20% |
+| Fused CUDA edge builder | 0.02s | 3% |
+| GPU sort + annotator split | 0.08s | 13% |
+| Download + problem build | 0.04s | 7% |
+| GPU Auction batch solve | 0.24s | 40% |
+| Overhead (I/O, upload) | 0.10s | 17% |
+| **Total** | **0.60s** | 100% |
 
 ---
 
