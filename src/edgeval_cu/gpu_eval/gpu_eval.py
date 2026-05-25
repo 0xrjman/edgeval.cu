@@ -106,27 +106,6 @@ def _build_edges_fused(pred_t, gt_all_t, max_dist_px, scale=100):
     return edges_gpu[:count]
 
 
-def _edges_to_problems(edges_sorted, gt_offsets, gt_n, n_pred, oc_int):
-    """Split GPU-sorted edges by GT annotator into problem dicts (CPU numpy)."""
-    problems = []
-    meta = []
-    gt_col = edges_sorted[:, 1]
-    anno_idx = np.searchsorted(gt_offsets, gt_col, side='right') - 1
-    anno_idx = np.clip(anno_idx, 0, len(gt_n) - 1)
-    for g_idx in range(len(gt_n)):
-        mask = anno_idx == g_idx
-        n_edges = int(mask.sum())
-        if n_edges == 0:
-            continue
-        eg = edges_sorted[mask].copy()
-        eg[:, 1] -= gt_offsets[g_idx]
-        problems.append({
-            'n_persons': n_pred, 'n_objects': int(gt_n[g_idx]),
-            'edges': eg, 'outlier_cost': oc_int,
-        })
-        meta.append((g_idx, n_pred))
-    return problems, meta
-
 
 # ── Main evaluation ──────────────────────────────────────────────────
 
@@ -200,7 +179,9 @@ def gpu_edges_eval_img(edge_prob, gt_path, thrs=99, max_dist=0.0075,
     gt_all_t = torch.from_numpy(gt_all_np).cuda()
     gt_n = np.array([len(g) for g in gt_list], dtype=np.int32)
     gt_offsets = np.array([0] + list(np.cumsum(gt_n)), dtype=np.int32)
-    n_gt_pixels = int(gt_all_np.shape[0])  # total GT pixels, not annotator count!
+    gt_offsets_t = torch.from_numpy(gt_offsets).cuda()
+    n_gt_pixels = int(gt_all_np.shape[0])  # total GT pixels
+    n_annos = len(gt_n)
 
     # Total GT pixel count
     all_g_sum = np.zeros((H, W), dtype=np.int64)
@@ -223,15 +204,41 @@ def gpu_edges_eval_img(edge_prob, gt_path, thrs=99, max_dist=0.0075,
             if edges_t is None:
                 continue
 
-            # GPU sort: compound key = person * n_gt_pixels + object
-            compound = edges_t[:, 0].to(torch.int64) * n_gt_pixels + edges_t[:, 1].to(torch.int64)
+            # GPU split: sort by (annotator, person, gt_global)
+            # Compound key = anno * SP + person * SG + gt_global
+            SP = n_pred * n_gt_pixels + 1  # scale for annotator
+            SG = n_gt_pixels                # scale for person
+            ai = torch.bucketize(edges_t[:, 1].contiguous().to(torch.int32),
+                                 gt_offsets_t, right=True) - 1
+            ai = ai.clamp(0, n_annos - 1)
+            compound = (ai.to(torch.int64) * SP +
+                        edges_t[:, 0].to(torch.int64) * SG +
+                        edges_t[:, 1].to(torch.int64))
             _, indices = torch.sort(compound)
-            edges_sorted = edges_t[indices].cpu().numpy()
+            edges_sorted = edges_t[indices]
+            ai_sorted = ai[indices]
 
-            # CPU split by annotator
-            probs, metas = _edges_to_problems(edges_sorted, gt_offsets, gt_n, n_pred, oc_int)
-            for prob, (g_idx, _) in zip(probs, metas):
-                problems.append(prob)
+            # Find annotator boundaries
+            boundaries = torch.cat([
+                torch.tensor([0], device='cuda'),
+                torch.where(ai_sorted[1:] != ai_sorted[:-1])[0] + 1,
+                torch.tensor([len(ai_sorted)], device='cuda')
+            ])
+
+            # Download once and split by boundaries
+            edges_np = edges_sorted.cpu().numpy()
+            bounds_np = boundaries.cpu().numpy()
+            for b in range(len(bounds_np) - 1):
+                lo, hi = bounds_np[b], bounds_np[b + 1]
+                if lo == hi:
+                    continue
+                g_idx = int(ai_sorted[lo].item())
+                eg = edges_np[lo:hi].copy()
+                eg[:, 1] -= gt_offsets[g_idx]
+                problems.append({
+                    'n_persons': n_pred, 'n_objects': int(gt_n[g_idx]),
+                    'edges': eg, 'outlier_cost': oc_int,
+                })
                 prob_meta.append((k_idx, g_idx))
 
     elif mode == 'extended':
