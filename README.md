@@ -1,14 +1,13 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.8+-blue?logo=python" alt="Python">
   <img src="https://img.shields.io/badge/CUDA-12.x-76B900?logo=nvidia" alt="CUDA">
-  <img src="https://img.shields.io/badge/RTX_4090-12.8×_speedup-ED8B00?logo=nvidia" alt="Speed">
   <img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License">
 </p>
 
 <p align="center">
-  <h1 align="center">⚡ edgeval.cu</h1>
-  <p align="center"><em>Edge Detection Evaluation at the Speed of Light</em></p>
-  <p align="center"><strong>20 min → 1.6 min</strong> on BSDS500 &nbsp;|&nbsp; <strong>12.8×</strong> faster than CPU &nbsp;|&nbsp; Zero compromise on metrics</p>
+  <h1 align="center">edgeval.cu</h1>
+  <p align="center">GPU-accelerated edge detection evaluation</p>
+  <p align="center"><strong>20 min → 1.6 min</strong> on BSDS500 &nbsp;|&nbsp; <strong>12.8×</strong> faster than CPU</p>
 </p>
 
 ---
@@ -32,7 +31,7 @@ Predicted edges ──→  Match (cost = distance)  ←── Ground truth edges
                      Or pay outlier penalty
 ```
 
-We solve it with the **Auction Algorithm** (Bertsekas, 1979), perfectly suited for GPU parallelism. Each predicted pixel "bids" on ground truth pixels. The highest bidder wins. Repeat until everyone is matched.
+We solve it with the **Auction Algorithm** (Bertsekas, 1979), perfectly suited for GPU parallelism. Each predicted pixel iteratively bids on ground truth pixels; the highest bidder wins each round. Repeat until convergence.
 
 ```mermaid
 flowchart LR
@@ -52,7 +51,7 @@ flowchart LR
     end
 
     subgraph Solve["⚔️ Solver"]
-        AUCT["Auction Algorithm\nε-Scaling 8→0\n485 problems in parallel"]
+        AUCT["Auction Algorithm\nε-Scaling 8→0\n485 problems/parallel"]
     end
 
     subgraph Out["📊 Output"]
@@ -66,7 +65,7 @@ flowchart LR
     AUCT --> AP
 ```
 
-### The ε-Scaling Secret
+### ε-Scaling Strategy
 
 ```
 ε = 8  →  coarse solution in ~100 rounds
@@ -80,7 +79,7 @@ Most problems converge within 200-300 rounds at ε=0. We detect convergence by c
 
 ### Two Modes for Two Needs
 
-| | 🚀 Simple (Training) | 🎯 Extended (Paper) |
+| | Simple (Training) | Extended (Paper) |
 |---|---|---|
 | Graph | Bipartite, real edges only | n×n, kOfN + diagonal overlay |
 | Speed | **0.47s/img** | ~5.7s/img |
@@ -114,7 +113,7 @@ Overhead         █████░░░░░░░░░░░░░░░  0
 TOTAL            0.47s
 ```
 
-> 📊 Full breakdown and configuration sweep: [docs/benchmarks.md](docs/benchmarks.md)
+> Detailed breakdown and configuration sweep: [docs/benchmarks.md](docs/benchmarks.md)
 
 ---
 
@@ -142,7 +141,7 @@ info, _ = gpu_edges_eval_img(edge_map, "GT/100007.mat", thrs=99, mode='simple')
 
 ## Accuracy
 
-The +0.003 ODS bias comes from the Auction solver's `atomicMax` tie-breaking — it's **systematic, stable, and small**. In practice:
+The +0.003 ODS bias comes from the Auction solver's `atomicMax` tie-breaking. It is systematic and stable across images. In practice:
 
 - Training monitoring: GPU simple mode — ~0.003 won't affect your model ranking
 - Final evaluation: CPU CSA mode — exact match to MATLAB reference
@@ -195,20 +194,16 @@ We went from 5.7s to 0.47s per image — a **12× within-GPU speedup** — throu
 | 7 | Tuned ITERS_EPS0 | 1.2× | 500 iterations is plenty — system sweep proves it |
 | 8 | Directory restructure | — | Flat modules, clean imports |
 
-Full story: [docs/optimization.md](docs/optimization.md)
+Details: [docs/optimization.md](docs/optimization.md)
 
 ---
 
 ## References
 
-- [Bertsekas, "Auction Algorithms" (1979)](https://web.mit.edu/dimitrib/www/Auction_Encycl.pdf) — The algorithm that makes this possible
+- [Bertsekas, "Auction Algorithms" (1979)](https://web.mit.edu/dimitrib/www/Auction_Encycl.pdf) — Auction algorithm for assignment problems
 - [Guo & Hall, "Parallel Thinning" (1989)](https://gist.github.com/joefutrelle/562f25bbcf20691217b8) — Zhang-Suen morphological thinning
 - [HED Evaluation (MATLAB)](https://github.com/s9xie/hed_release-deprecated) — Original reference implementation
 - [edge-eval-python](https://github.com/Walstruzz/edge_eval_python) — Python CSA port
 - [Extended BSDS Benchmark](https://github.com/davidstutz/extended-berkeley-segmentation-benchmark) — C++ CSA solver
 
 ---
-
-<p align="center">
-  <sub>Built with ❤️ for the edge detection community</sub>
-</p>
