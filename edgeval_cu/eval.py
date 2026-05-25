@@ -324,6 +324,8 @@ def gpu_edges_eval_dir(res_dir, gt_dir, thrs=99, max_dist=0.0075,
     ois_sum = np.zeros(4, dtype=np.int64)
     scores = np.zeros((len(ids), 5), dtype=np.float32)
 
+    cache_hits = 0
+    cache_misses = 0
     for ci, name in enumerate(tqdm(ids)):
         res_path = os.path.join(res_dir, name + ".png")
         gt_path = os.path.join(gt_dir, name + ".mat")
@@ -332,6 +334,7 @@ def gpu_edges_eval_dir(res_dir, gt_dir, thrs=99, max_dist=0.0075,
         if os.path.isfile(out_path):
             data = np.loadtxt(out_path, dtype=np.float32)
             img_cnt = data[:, 1:5].astype(np.int64)
+            cache_hits += 1
         else:
             edge = cv2.imread(res_path, cv2.IMREAD_UNCHANGED) / 255.0
             if edge.ndim != 2:
@@ -341,6 +344,7 @@ def gpu_edges_eval_dir(res_dir, gt_dir, thrs=99, max_dist=0.0075,
                                            mode=mode)
             img_cnt = info_v[:, 1:5].astype(np.int64)
             np.savetxt(out_path, info_v, fmt="%10g")
+            cache_misses += 1
 
         cnt_sum += img_cnt
         r, p, f = compute_rpf(img_cnt)
@@ -376,6 +380,12 @@ def gpu_edges_eval_dir(res_dir, gt_dir, thrs=99, max_dist=0.0075,
                np.stack([t, r, p, f], axis=1), fmt="%.6f")
     np.savetxt(os.path.join(eval_dir, "eval_bdry.txt"), bdry, fmt="%.6f")
     print(f"ODS: {ods_f:.4f}    OIS: {ois_f.item():.4f}")
+
+    if cache_hits + cache_misses > 0:
+        print(f"Cache: {cache_hits} hit, {cache_misses} compute (dir: {eval_dir})")
+        if cache_hits > 0 and cache_misses == 0:
+            print("  NOTE: all images read from cache — no GPU computation performed.")
+            print("  To recompute, delete the cache dir or pass cleanup=1.")
 
     if cleanup:
         for f in glob.glob(os.path.join(eval_dir, "*_ev1.txt")):
