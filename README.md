@@ -211,9 +211,7 @@ Details: [docs/optimization.md](docs/optimization.md)
 
 ## References
 
-- [Bertsekas, "Auction Algorithms" (1979)](https://web.mit.edu/dimitrib/www/Auction_Encycl.pdf) — Auction algorithm for assignment problems
-- [Guo & Hall, "Parallel Thinning" (1989)](https://gist.github.com/joefutrelle/562f25bbcf20691217b8) — Zhang-Suen morphological thinning
-- [HED Evaluation (MATLAB)](https://github.com/s9xie/hed_release-deprecated) — Original reference implementation
+- [HED Evaluation (MATLAB)](https://github.com/s9xie/hed_release-deprecated) — Original edge detection evaluation reference
 - [edge-eval-python](https://github.com/Walstruzz/edge_eval_python) — Python CSA port
 - [Extended BSDS Benchmark](https://github.com/davidstutz/extended-berkeley-segmentation-benchmark) — C++ CSA solver
 
