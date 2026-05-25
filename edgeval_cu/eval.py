@@ -69,9 +69,15 @@ def _get_edge_lib():
     global _lib_edge
     if _lib_edge is not None:
         return _lib_edge
+    # Compile CUDA kernels if needed (first import after pip install)
+    from ._compile import ensure_compiled
+    ensure_compiled()
     lib_path = os.path.join(os.path.dirname(__file__), 'cuda', 'edge_builder.so')
     if not os.path.exists(lib_path):
-        raise RuntimeError("edge_builder.so not found. Run 'make -C gpu_eval' first.")
+        raise RuntimeError(
+            "edge_builder.so not found after compilation. "
+            "Check that nvcc is available and CUDA toolkit is installed."
+        )
     _lib_edge = ctypes.CDLL(lib_path)
     _lib_edge.launch_build_edges.argtypes = [
         ctypes.c_void_p, ctypes.c_void_p,

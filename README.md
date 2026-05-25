@@ -120,10 +120,19 @@ TOTAL            0.47s
 ## Quick Start
 
 ```bash
-git clone https://github.com/0xrjman/edgeval.cu.git
-cd edgeval.cu
-pip install -e .
-cd edgeval_cu/cuda && make          # compile CUDA kernels
+pip install edgeval-cu
+```
+
+Requires Python 3.8+, PyTorch, CUDA toolkit (nvcc), NumPy, SciPy, OpenCV, tqdm, click.
+
+CUDA kernels are compiled on first import — no extra build step needed. If compilation fails, install system dependencies first:
+
+```bash
+# Debian/Ubuntu
+sudo apt install nvidia-cuda-toolkit build-essential
+
+# Verify nvcc
+nvcc --version
 ```
 
 ```bash
@@ -134,8 +143,6 @@ edgeval eval results/ --gpu --dataset BSDS
 from edgeval_cu.eval import gpu_edges_eval_img
 info, _ = gpu_edges_eval_img(edge_map, "GT/100007.mat", thrs=99, mode='simple')
 ```
-
-**Requirements**: Python 3.8+, PyTorch, CUDA 12.x, NumPy, SciPy, OpenCV, tqdm.
 
 ---
 
@@ -163,6 +170,7 @@ edgeval.cu/
 ├── edgeval_cu/              # Package
 │   ├── eval.py              # Main pipeline — gpu_edges_eval_img()
 │   ├── auction.py           # GPU Auction wrapper
+│   ├── _compile.py          # Lazy CUDA kernel compilation
 │   ├── metrics.py           # ODS/OIS/AP/R50 computation
 │   ├── csa.py               # CPU CSA solver (exact reference)
 │   ├── nms_thin.py          # Zhang-Suen thinning LUTs
@@ -171,6 +179,8 @@ edgeval.cu/
 │       ├── auction_kernel.cu    # ε-Scaling Auction solver
 │       ├── edge_builder.cu      # Fused edge builder
 │       └── Makefile
+├── cxx/                     # CPU CSA C++ solver
+│   └── lib/solve_csa.so
 ├── docs/
 │   ├── benchmarks.md        # Detailed benchmarks & config sweep
 │   └── optimization.md      # 8-stage optimization journey (5.7s→0.47s)

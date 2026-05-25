@@ -137,9 +137,15 @@ def _get_lib():
     global _lib
     if _lib is not None:
         return _lib
+    # Compile CUDA kernels if needed (first import after pip install)
+    from ._compile import ensure_compiled
+    ensure_compiled()
     lib_path = os.path.join(os.path.dirname(__file__), 'cuda', 'auction_cuda.so')
     if not os.path.exists(lib_path):
-        raise RuntimeError("auction_cuda.so not found. Run 'make -C gpu_eval' first.")
+        raise RuntimeError(
+            "auction_cuda.so not found after compilation. "
+            "Check that nvcc is available and CUDA toolkit is installed."
+        )
     _lib = ctypes.CDLL(lib_path)
     _lib.auction_solve_batch.restype = ctypes.c_int
     _lib.auction_solve_batch.argtypes = [
